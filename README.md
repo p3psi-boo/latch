@@ -30,10 +30,13 @@ Browser Tabs
 
 ### 2. Start the Background Service
 
-**Option 1: Using Node / pnpm directly**
+**Option 1: Run instantly with npx (zero clone/install)**
 ```bash
-pnpm install
-pnpm --filter @latch/daemon start # Listens on 127.0.0.1:12580
+# Start background HTTP service on 127.0.0.1:12580
+npx github:p3psi-boo/latch start
+
+# Or start with MCP stdio support (e.g. for AI agent clients)
+npx github:p3psi-boo/latch mcp
 ```
 
 **Option 2: Using Docker**
@@ -41,6 +44,13 @@ pnpm --filter @latch/daemon start # Listens on 127.0.0.1:12580
 docker run -d --name latch-server -p 12580:12580 ghcr.io/p3psi-boo/latch:latest
 # or with docker compose:
 docker compose up -d
+```
+
+**Option 3: Run from source**
+```bash
+pnpm install
+pnpm build
+pnpm --filter @latch/daemon start # Listens on 127.0.0.1:12580
 ```
 
 ### 3. Install the Browser Extension
@@ -77,20 +87,21 @@ pnpm --filter @latch/daemon mcp
 {
   "mcpServers": {
     "latch": {
-      "command": "pnpm",
-      "args": ["--filter", "@latch/daemon", "mcp"],
-      "cwd": "/path/to/my-kimi-webbridge"
+      "command": "npx",
+      "args": ["github:p3psi-boo/latch", "mcp"]
     }
   }
 }
 ```
 
+*(Or use local repository command: `"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp"]`)*
+
 **Grok (`.grok/config.toml`):**
 
 ```toml
 [mcp_servers.latch]
-command = "pnpm"
-args = ["--filter", "@latch/daemon", "mcp"]
+command = "npx"
+args = ["github:p3psi-boo/latch", "mcp"]
 ```
 
 ---

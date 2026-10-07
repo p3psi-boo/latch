@@ -7,7 +7,14 @@ settings:
 importers:
 
   .:
+    dependencies:
+      ws:
+        specifier: ^8.22.0
+        version: 8.22.0
     devDependencies:
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

@@ -30,10 +30,13 @@ Latch 浏览器扩展 (Chrome / Chromium)
 
 ### 2. 启动后台服务
 
-**方式一：直接运行（Node / pnpm）**
+**方式一：使用 npx 免克隆一键运行**
 ```bash
-pnpm install
-pnpm --filter @latch/daemon start # 默认监听 127.0.0.1:12580
+# 启动后台 HTTP 服务（监听 127.0.0.1:12580）
+npx github:p3psi-boo/latch start
+
+# 或启动带 MCP stdio 支持的服务（用于 AI 客户端接入）
+npx github:p3psi-boo/latch mcp
 ```
 
 **方式二：使用 Docker 运行**
@@ -41,6 +44,13 @@ pnpm --filter @latch/daemon start # 默认监听 127.0.0.1:12580
 docker run -d --name latch-server -p 12580:12580 ghcr.io/p3psi-boo/latch:latest
 # 或通过 docker compose 启动：
 docker compose up -d
+```
+
+**方式三：本地源码运行**
+```bash
+pnpm install
+pnpm build
+pnpm --filter @latch/daemon start # 默认监听 127.0.0.1:12580
 ```
 
 ### 3. 安装浏览器扩展
@@ -77,20 +87,21 @@ pnpm --filter @latch/daemon mcp
 {
   "mcpServers": {
     "latch": {
-      "command": "pnpm",
-      "args": ["--filter", "@latch/daemon", "mcp"],
-      "cwd": "/path/to/my-kimi-webbridge"
+      "command": "npx",
+      "args": ["github:p3psi-boo/latch", "mcp"]
     }
   }
 }
 ```
 
-**Grok（项目根目录 `.grok/config.toml`）：**
+*(如使用本地克隆代码，则为：`"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp"]`)*
+
+**Grok（`.grok/config.toml`）：**
 
 ```toml
 [mcp_servers.latch]
-command = "pnpm"
-args = ["--filter", "@latch/daemon", "mcp"]
+command = "npx"
+args = ["github:p3psi-boo/latch", "mcp"]
 ```
 
 ---

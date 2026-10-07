@@ -3,20 +3,27 @@
   "private": true,
   "version": "0.1.0",
   "description": "Open-source browser hands: real Chrome, local MCP/HTTP daemon.",
-  "type": "module",
+  "bin": {
+    "latch": "./bin/latch.cjs"
+  },
   "scripts": {
-    "build": "pnpm -r build",
+    "build": "pnpm -r build && pnpm build:daemon",
+    "build:daemon": "esbuild packages/daemon/src/cli.ts --bundle --platform=node --target=node22 --format=cjs --outfile=bin/latch.cjs",
     "dev:daemon": "pnpm --filter @latch/daemon dev",
     "build:extension": "pnpm --filter @latch/extension build",
     "zip:extension": "pnpm build:extension && (cd packages/extension/dist && zip -r ../../../latch-extension.zip .)",
     "test": "pnpm -r test"
   },
   "devDependencies": {
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.3"
   },
   "engines": {
     "node": ">=22"
   },
   "packageManager": "pnpm@11.9.0",
-  "license": "WTFPL"
+  "license": "WTFPL",
+  "dependencies": {
+    "ws": "^8.22.0"
+  }
 }
