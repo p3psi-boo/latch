@@ -8,6 +8,7 @@
     "build": "pnpm -r build",
     "dev:daemon": "pnpm --filter @latch/daemon dev",
     "build:extension": "pnpm --filter @latch/extension build",
+    "zip:extension": "pnpm build:extension && (cd packages/extension/dist && zip -r ../../../latch-extension.zip .)",
     "test": "pnpm -r test"
   },
   "devDependencies": {

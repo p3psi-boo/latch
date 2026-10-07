@@ -1,0 +1,12 @@
+services:
+  latch:
+    image: ghcr.io/p3psi-boo/latch:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: latch-server
+    restart: unless-stopped
+    ports:
+      - "12580:12580"
+    environment:
+      - NODE_ENV=production

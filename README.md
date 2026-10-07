@@ -24,28 +24,38 @@ Browser Tabs
 
 ### 1. Requirements
 
-- Node.js 22 or later
+- Node.js 22 or later (or Docker)
 - pnpm
 - Google Chrome or any Chromium-based browser
 
-### 2. Install and Build
+### 2. Start the Background Service
 
+**Option 1: Using Node / pnpm directly**
 ```bash
 pnpm install
-
-# Start the background service (default: 127.0.0.1:12580)
-pnpm --filter @latch/daemon start
-
-# Build the browser extension (output: packages/extension/dist)
-pnpm --filter @latch/extension build
+pnpm --filter @latch/daemon start # Listens on 127.0.0.1:12580
 ```
 
-### 3. Load the Browser Extension
+**Option 2: Using Docker**
+```bash
+docker run -d --name latch-server -p 12580:12580 ghcr.io/p3psi-boo/latch:latest
+# or with docker compose:
+docker compose up -d
+```
 
+### 3. Install the Browser Extension
+
+- **From GitHub Release / Artifact**: Download `latch-extension.zip` from Releases or CI artifacts, and unzip it.
+- **Or build from source**:
+  ```bash
+  pnpm build:extension # builds to packages/extension/dist
+  ```
+
+In Chrome / Chromium:
 1. Open `chrome://extensions` in your browser.
 2. Enable **Developer mode** in the top right.
-3. Click **Load unpacked** and select the `packages/extension/dist` directory.
-4. The toolbar icon reflects whether the extension is connected to the background service.
+3. Click **Load unpacked** and select the unzipped directory (or `packages/extension/dist`).
+4. The extension icon in the toolbar indicates connection to the background service.
 
 ---
 

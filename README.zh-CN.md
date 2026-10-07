@@ -24,28 +24,38 @@ Latch 浏览器扩展 (Chrome / Chromium)
 
 ### 1. 环境准备
 
-- Node.js 22 或更高版本
+- Node.js 22 或更高版本（或使用 Docker）
 - pnpm
 - Google Chrome 或基于 Chromium 的浏览器
 
-### 2. 安装与构建
+### 2. 启动后台服务
 
+**方式一：直接运行（Node / pnpm）**
 ```bash
 pnpm install
+pnpm --filter @latch/daemon start # 默认监听 127.0.0.1:12580
+```
 
-# 启动后台服务（默认监听 127.0.0.1:12580）
-pnpm --filter @latch/daemon start
-
-# 编译浏览器扩展（生成目录：packages/extension/dist）
-pnpm --filter @latch/extension build
+**方式二：使用 Docker 运行**
+```bash
+docker run -d --name latch-server -p 12580:12580 ghcr.io/p3psi-boo/latch:latest
+# 或通过 docker compose 启动：
+docker compose up -d
 ```
 
 ### 3. 安装浏览器扩展
 
-1. 在浏览器中打开 `chrome://extensions`。
-2. 打开右上角的 **开发者模式** 开关。
-3. 点击 **加载已解压的扩展程序**，选择项目中的 `packages/extension/dist` 目录。
-4. 扩展图标会显示与后台服务的连接状态。
+- **下载已打包文件**：直接在 GitHub Releases 或 Actions 构建产物中下载 `latch-extension.zip` 并解压。
+- **或本地源码构建**：
+  ```bash
+  pnpm build:extension # 编译至 packages/extension/dist
+  ```
+
+在 Chrome / Chromium 浏览器中：
+1. 打开 `chrome://extensions`。
+2. 开启右上角的 **开发者模式** 开关。
+3. 点击 **加载已解压的扩展程序**，选择解压后的目录（或源码中的 `packages/extension/dist`）。
+4. 工具栏上的扩展图标会实时指示与后台服务的连接状态。
 
 ---
 
