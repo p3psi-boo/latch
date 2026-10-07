@@ -1,0 +1,6 @@
+# TLS terminator in front of `latch start`.
+# Replace latch.example.com. Daemon stays on loopback.
+
+latch.example.com {
+	reverse_proxy 127.0.0.1:12580
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@latch/daemon",
+  "version": "0.1.0",
+  "license": "WTFPL",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "latch": "./src/cli.ts"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts start",
+    "start": "tsx src/cli.ts start",
+    "mcp": "tsx src/cli.ts mcp",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test src/sessions.test.ts src/hub.test.ts src/run.test.ts"
+  },
+  "dependencies": {
+    "@latch/protocol": "workspace:*",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.2",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

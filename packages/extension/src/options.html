@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Latch</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Latch</h1>
+      <p class="lede">Name this browser, then point it at your daemon.</p>
+      <p id="status" class="status">Checking…</p>
+      <label>
+        Browser id
+        <input id="browser-id" spellcheck="false" placeholder="leave blank to generate" maxlength="64" />
+      </label>
+      <p class="hint">A name you choose, used in commands as <code>browser</code>. Leave blank to mint a UUID and keep it. Give each Chrome profile a different id if they share one daemon.</p>
+      <label>
+        Remark
+        <input id="remark" maxlength="200" placeholder="work laptop, office profile…" />
+      </label>
+      <p class="hint">Optional. Shown in <code>GET /status</code> and <code>list_browsers</code>. Does not affect routing.</p>
+      <label>
+        WebSocket URL
+        <input id="url" spellcheck="false" placeholder="ws://127.0.0.1:12580/ws" />
+      </label>
+      <p class="hint">Local default is loopback. A self-hosted daemon is <code>wss://your.domain/ws</code>.</p>
+      <div class="row">
+        <button id="save" type="button">Save and reconnect</button>
+        <button id="reset" type="button" class="ghost">Reset to local</button>
+      </div>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

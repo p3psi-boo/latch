@@ -1,0 +1,19 @@
+{
+  "name": "@latch/extension",
+  "version": "0.1.0",
+  "private": true,
+  "license": "WTFPL",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test --experimental-strip-types src/ax.test.ts src/pointer-motion.test.ts"
+  },
+  "dependencies": {
+    "@latch/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.24",
+    "esbuild": "^0.25.10",
+    "typescript": "^5.9.3"
+  }
+}

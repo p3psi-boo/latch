@@ -1,0 +1,17 @@
+[Unit]
+Description=Latch daemon (browser-hands forwarder)
+After=network.target
+
+[Service]
+Type=simple
+User=latch
+WorkingDirectory=/opt/latch
+Environment=LATCH_PORT=12580
+Environment=LATCH_HOST=127.0.0.1
+ExecStart=/usr/bin/node --import tsx /opt/latch/packages/daemon/src/cli.ts start --host 127.0.0.1 --port 12580
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
