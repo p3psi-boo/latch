@@ -100,6 +100,17 @@ export function startHttp(options: {
   };
 }
 
+function parseRoute(pathname: string): { browserFromPath?: string; cleanPath: string } {
+  // Supports /b/:browserId/... or /browser/:browserId/...
+  const match = pathname.match(/^\/(?:b|browser)\/([^/]+)(\/.*)?$/);
+  if (match) {
+    const browserFromPath = decodeURIComponent(match[1]!);
+    const cleanPath = match[2] || "/";
+    return { browserFromPath, cleanPath };
+  }
+  return { cleanPath: pathname };
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
@@ -107,8 +118,11 @@ async function handle(
   port: number,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
+  const { browserFromPath, cleanPath } = parseRoute(url.pathname);
+  const browserParam = url.searchParams.get("browser") ?? browserFromPath ?? undefined;
+
   try {
-    if (req.method === "GET" && url.pathname === "/status") {
+    if (req.method === "GET" && cleanPath === "/status") {
       const browsers = hub.list();
       sendJson(res, 200, {
         ok: true,
@@ -121,11 +135,12 @@ async function handle(
       });
       return;
     }
-    if (req.method === "POST" && url.pathname === "/command") {
+    if (req.method === "POST" && cleanPath === "/command") {
       const body = await readBody(req);
       const command = parseCommand(body);
+      const targetBrowser = command.browser ?? browserParam;
       try {
-        const slot = hub.resolve(command.browser);
+        const slot = hub.resolve(targetBrowser);
         const data = await dispatchCommand(
           slot.bridge,
           slot.store,
@@ -140,20 +155,20 @@ async function handle(
       }
       return;
     }
-    if (req.method === "POST" && url.pathname === "/run") {
+    if (req.method === "POST" && cleanPath === "/run") {
       const body = await readBody(req);
       const request = parseRun(body);
+      const targetBrowser = request.browser ?? browserParam;
       const outcome = await executeRun({
         source: request.source,
         timeoutMs: request.timeoutMs,
-        dispatch: bindHubDispatch(hub, request.session, request.browser),
+        dispatch: bindHubDispatch(hub, request.session, targetBrowser),
       });
       sendJson(res, 200, outcome);
       return;
     }
-    if (url.pathname === "/sse") {
+    if (cleanPath === "/sse") {
       if (req.method === "GET") {
-        const browserParam = url.searchParams.get("browser") ?? undefined;
         const sessionId = Math.random().toString(36).slice(2);
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
@@ -161,7 +176,9 @@ async function handle(
           Connection: "keep-alive",
           "Access-Control-Allow-Origin": "*",
         });
-        const postEndpoint = `/mcp?sessionId=${sessionId}${browserParam ? `&browser=${encodeURIComponent(browserParam)}` : ""}`;
+        const prefix = browserFromPath ? `/b/${encodeURIComponent(browserFromPath)}` : "";
+        const q = !browserFromPath && browserParam ? `&browser=${encodeURIComponent(browserParam)}` : "";
+        const postEndpoint = `${prefix}/mcp?sessionId=${sessionId}${q}`;
         res.write(`event: endpoint\ndata: ${postEndpoint}\n\n`);
 
         const pingInterval = setInterval(() => {
@@ -183,7 +200,7 @@ async function handle(
         return;
       }
     }
-    if (url.pathname === "/mcp") {
+    if (cleanPath === "/mcp") {
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
@@ -206,7 +223,6 @@ async function handle(
           });
           return;
         }
-        const browserParam = url.searchParams.get("browser") ?? undefined;
         try {
           const outcome = await handleMcpMessage(msg, hub, browserParam);
           if (!outcome) {

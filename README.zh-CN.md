@@ -135,8 +135,13 @@ args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 | `GET` | `/ws` | 无 | 供浏览器扩展建立的 WebSocket 连接 |
 
 > **提示：** 可以直接通过 HTTP/SSE 远程接入 MCP，无需在调用方本地启动进程：
-> - SSE 接入地址：`http://127.0.0.1:12580/sse`（可拼接 `?browser=work` 固定特定浏览器）
-> - HTTP POST 接入地址：`http://127.0.0.1:12580/mcp`（可拼接 `?browser=work` 固定特定浏览器）
+> - **Query 参数绑定：**
+>   - SSE: `http://127.0.0.1:12580/sse?browser=work`
+>   - POST: `http://127.0.0.1:12580/mcp?browser=work`
+> - **URL 路径前缀绑定：**
+>   - SSE: `http://127.0.0.1:12580/b/work/sse`
+>   - POST: `http://127.0.0.1:12580/b/work/mcp`
+>   - 普通指令与脚本接口同理：`http://127.0.0.1:12580/b/work/run`、`http://127.0.0.1:12580/b/work/command`
 
 #### 示例 1：执行自动化脚本 (`POST /run`)
 

@@ -135,8 +135,13 @@ The background service exposes the following endpoints on `http://127.0.0.1:1258
 | `GET` | `/ws` | None | WebSocket connection used by the browser extension |
 
 > **Tip:** You can connect MCP clients remotely via HTTP/SSE without running a local process:
-> - SSE URL: `http://127.0.0.1:12580/sse` (or `http://127.0.0.1:12580/sse?browser=work` to pin a browser)
-> - HTTP POST URL: `http://127.0.0.1:12580/mcp` (or `http://127.0.0.1:12580/mcp?browser=work`)
+> - **Query binding:**
+>   - SSE: `http://127.0.0.1:12580/sse?browser=work`
+>   - POST: `http://127.0.0.1:12580/mcp?browser=work`
+> - **Path prefix binding:**
+>   - SSE: `http://127.0.0.1:12580/b/work/sse`
+>   - POST: `http://127.0.0.1:12580/b/work/mcp`
+>   - Commands / Run: `http://127.0.0.1:12580/b/work/run`, `http://127.0.0.1:12580/b/work/command`
 
 #### Example: Running an automation script (`POST /run`)
 
