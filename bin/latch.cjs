@@ -2222,16 +2222,16 @@ var require_extension = __commonJS({
         throw new SyntaxError("Unexpected end of input");
       }
       if (end === -1) end = i;
-      const token = header.slice(start, end);
+      const token2 = header.slice(start, end);
       if (extensionName === void 0) {
-        push(offers, token, params);
+        push(offers, token2, params);
       } else {
         if (paramName === void 0) {
-          push(params, token, true);
+          push(params, token2, true);
         } else if (mustUnescape) {
-          push(params, paramName, token.replace(/\\/g, ""));
+          push(params, paramName, token2.replace(/\\/g, ""));
         } else {
-          push(params, paramName, token);
+          push(params, paramName, token2);
         }
         push(offers, extensionName, params);
       }
@@ -4230,8 +4230,9 @@ function startHttp(options) {
   const host2 = options.host ?? DEFAULT_HOST;
   const requested = options.port ?? DEFAULT_PORT;
   const hub2 = options.hub;
+  const token2 = options.token;
   const server = (0, import_node_http.createServer)((req, res) => {
-    void handle(req, res, hub2, boundPort);
+    void handle(req, res, hub2, boundPort, token2);
   });
   const wss = new import_websocket_server.default({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
@@ -4239,6 +4240,14 @@ function startHttp(options) {
     if (url.pathname !== "/ws") {
       socket.destroy();
       return;
+    }
+    if (token2) {
+      const clientToken = url.searchParams.get("token") ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : void 0);
+      if (clientToken !== token2) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       hub2.accept(ws);
@@ -4265,21 +4274,17 @@ function startHttp(options) {
     })
   };
 }
-function parseRoute(pathname) {
-  const match = pathname.match(/^\/(?:b|browser)\/([^/]+)(\/.*)?$/);
-  if (match) {
-    const browserFromPath = decodeURIComponent(match[1]);
-    const cleanPath = match[2] || "/";
-    return { browserFromPath, cleanPath };
-  }
-  return { cleanPath: pathname };
-}
-async function handle(req, res, hub2, port) {
+async function handle(req, res, hub2, port, token2) {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  const { browserFromPath, cleanPath } = parseRoute(url.pathname);
-  const browserParam = url.searchParams.get("browser") ?? browserFromPath ?? void 0;
+  if (token2 && req.method !== "OPTIONS") {
+    const clientToken = url.searchParams.get("token") ?? (req.headers.authorization?.startsWith("Bearer ") ? req.headers.authorization.slice(7).trim() : void 0);
+    if (clientToken !== token2) {
+      sendJson(res, 401, { ok: false, error: "unauthorized: invalid or missing token" });
+      return;
+    }
+  }
   try {
-    if (req.method === "GET" && cleanPath === "/status") {
+    if (req.method === "GET" && url.pathname === "/status") {
       const browsers = hub2.list();
       sendJson(res, 200, {
         ok: true,
@@ -4292,10 +4297,10 @@ async function handle(req, res, hub2, port) {
       });
       return;
     }
-    if (req.method === "POST" && cleanPath === "/command") {
+    if (req.method === "POST" && url.pathname === "/command") {
       const body = await readBody(req);
       const command2 = parseCommand(body);
-      const targetBrowser = command2.browser ?? browserParam;
+      const targetBrowser = command2.browser ?? (url.searchParams.get("browser") || void 0);
       try {
         const slot = hub2.resolve(targetBrowser);
         const data = await dispatchCommand(
@@ -4312,10 +4317,10 @@ async function handle(req, res, hub2, port) {
       }
       return;
     }
-    if (req.method === "POST" && cleanPath === "/run") {
+    if (req.method === "POST" && url.pathname === "/run") {
       const body = await readBody(req);
       const request = parseRun(body);
-      const targetBrowser = request.browser ?? browserParam;
+      const targetBrowser = request.browser ?? (url.searchParams.get("browser") || void 0);
       const outcome = await executeRun({
         source: request.source,
         timeoutMs: request.timeoutMs,
@@ -4324,12 +4329,13 @@ async function handle(req, res, hub2, port) {
       sendJson(res, 200, outcome);
       return;
     }
-    if (cleanPath === "/mcp") {
+    const mcpMatch = url.pathname.match(/^\/mcp(?:\/([^/]+))?$/);
+    if (mcpMatch) {
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type"
+          "Access-Control-Allow-Headers": "Content-Type, Authorization"
         });
         res.end();
         return;
@@ -4347,8 +4353,10 @@ async function handle(req, res, hub2, port) {
           });
           return;
         }
+        const browserIdFromPath = mcpMatch[1] ? decodeURIComponent(mcpMatch[1]) : void 0;
+        const targetBrowser = browserIdFromPath ?? (url.searchParams.get("browser") || void 0);
         try {
-          const outcome = await handleMcpMessage(msg, hub2, browserParam);
+          const outcome = await handleMcpMessage(msg, hub2, targetBrowser);
           if (!outcome) {
             res.writeHead(202, {
               "Access-Control-Allow-Origin": "*"
@@ -4609,12 +4617,13 @@ function usage() {
   console.error(`latch \u2014 browser-hands daemon
 
 Usage:
-  latch start  [--port 12580] [--host 127.0.0.1]
-  latch mcp    [--port 12580] [--host 127.0.0.1] [--browser <id>]   also MCP on stdio
+  latch start  [--port 12580] [--host 127.0.0.1] [--token <secret>]
+  latch mcp    [--port 12580] [--host 127.0.0.1] [--token <secret>] [--browser <id>]
 
 Options:
   --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
   --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --token <secret>    Require Bearer token or ?token= query parameter (or LATCH_TOKEN)
   --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
 Agents POST /run (or MCP tool run) with a JavaScript source string. Helpers
@@ -4640,6 +4649,9 @@ function portFromArgs(argv2) {
 function hostFromArgs(argv2) {
   return flag(argv2, "--host") ?? process.env.LATCH_HOST ?? DEFAULT_HOST;
 }
+function tokenFromArgs(argv2) {
+  return flag(argv2, "--token") ?? process.env.LATCH_TOKEN;
+}
 function browserFromArgs(argv2) {
   return flag(argv2, "--browser") ?? process.env.LATCH_BROWSER;
 }
@@ -4648,13 +4660,14 @@ var command = argv[0] ?? "start";
 if (command === "-h" || command === "--help") usage();
 if (command !== "start" && command !== "mcp") usage();
 var host = hostFromArgs(argv);
-if (host !== "127.0.0.1" && host !== "localhost") {
+var token = tokenFromArgs(argv);
+if (host !== "127.0.0.1" && host !== "localhost" && !token) {
   console.error(
-    `[latch] warning: binding ${host} with no auth. Put this behind Caddy/nginx on loopback, or pass --host 127.0.0.1.`
+    `[latch] warning: binding ${host} with no auth. Pass --token <secret> or put this behind Caddy/nginx on loopback.`
   );
 }
 var hub = new Hub();
-startHttp({ hub, host, port: portFromArgs(argv) });
+startHttp({ hub, host, port: portFromArgs(argv), token });
 if (command === "mcp") {
   const fixedBrowserId = browserFromArgs(argv);
   startMcp(hub, fixedBrowserId);

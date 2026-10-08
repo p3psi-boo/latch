@@ -129,14 +129,15 @@ args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 |---|---|---|---|
 | `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | 在 Node.js 环境中执行自动化脚本 |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | 直接调用单个页面操作指令 |
-| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST (JSON-RPC) MCP 接口 |
+| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST MCP 接口（自动寻址可用浏览器） |
+| `POST` | `/mcp/{browser_id}` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST MCP 接口（直接固定到指定浏览器） |
 | `GET` | `/status` | 无 | 查看当前连接的浏览器与会话列表 |
 | `GET` | `/ws` | 无 | 供浏览器扩展建立的 WebSocket 连接 |
 
-> **提示：** 可以直接通过 HTTP POST 远程接入 MCP，无需在调用方本地启动进程：
-> - **Query 参数绑定：** `http://127.0.0.1:12580/mcp?browser=work`
-> - **URL 路径前缀绑定：** `http://127.0.0.1:12580/b/work/mcp`
-> - 普通指令与脚本接口同理：`http://127.0.0.1:12580/b/work/run`、`http://127.0.0.1:12580/b/work/command`
+> **鉴权保护与远程 MCP 接入提示：**
+> - **路径绑定浏览器：** 直接请求 `http://127.0.0.1:12580/mcp/work`，即可固定仅控制名为 `work` 的浏览器。
+> - **Token 鉴权：** 启动 daemon 时传入 `--token <secret>`（或配置环境变量 `LATCH_TOKEN=<secret>`）。调用时在 URL 查询参数中带上 `?token=<secret>`，或通过 Header `Authorization: Bearer <secret>` 验证。
+> - 完整请求地址示例：`http://127.0.0.1:12580/mcp/work?token=your_secret_here`
 
 #### 示例 1：执行自动化脚本 (`POST /run`)
 

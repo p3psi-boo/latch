@@ -8,12 +8,13 @@ function usage(): never {
   console.error(`latch — browser-hands daemon
 
 Usage:
-  latch start  [--port 12580] [--host 127.0.0.1]
-  latch mcp    [--port 12580] [--host 127.0.0.1] [--browser <id>]   also MCP on stdio
+  latch start  [--port 12580] [--host 127.0.0.1] [--token <secret>]
+  latch mcp    [--port 12580] [--host 127.0.0.1] [--token <secret>] [--browser <id>]
 
 Options:
   --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
   --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --token <secret>    Require Bearer token or ?token= query parameter (or LATCH_TOKEN)
   --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
 Agents POST /run (or MCP tool run) with a JavaScript source string. Helpers
@@ -43,6 +44,10 @@ function hostFromArgs(argv: string[]): string {
   return flag(argv, "--host") ?? process.env.LATCH_HOST ?? DEFAULT_HOST;
 }
 
+function tokenFromArgs(argv: string[]): string | undefined {
+  return flag(argv, "--token") ?? process.env.LATCH_TOKEN;
+}
+
 function browserFromArgs(argv: string[]): string | undefined {
   return flag(argv, "--browser") ?? process.env.LATCH_BROWSER;
 }
@@ -53,14 +58,15 @@ if (command === "-h" || command === "--help") usage();
 if (command !== "start" && command !== "mcp") usage();
 
 const host = hostFromArgs(argv);
-if (host !== "127.0.0.1" && host !== "localhost") {
+const token = tokenFromArgs(argv);
+if (host !== "127.0.0.1" && host !== "localhost" && !token) {
   console.error(
-    `[latch] warning: binding ${host} with no auth. Put this behind Caddy/nginx on loopback, or pass --host 127.0.0.1.`,
+    `[latch] warning: binding ${host} with no auth. Pass --token <secret> or put this behind Caddy/nginx on loopback.`,
   );
 }
 
 const hub = new Hub();
-startHttp({ hub, host, port: portFromArgs(argv) });
+startHttp({ hub, host, port: portFromArgs(argv), token });
 if (command === "mcp") {
   const fixedBrowserId = browserFromArgs(argv);
   startMcp(hub, fixedBrowserId);

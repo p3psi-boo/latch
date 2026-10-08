@@ -59,12 +59,14 @@ export function startHttp(options: {
   hub: Hub;
   host?: string;
   port?: number;
+  token?: string;
 }): { port: number; ready: Promise<number>; close: () => Promise<void> } {
   const host = options.host ?? DEFAULT_HOST;
   const requested = options.port ?? DEFAULT_PORT;
   const hub = options.hub;
+  const token = options.token;
   const server = createServer((req, res) => {
-    void handle(req, res, hub, boundPort);
+    void handle(req, res, hub, boundPort, token);
   });
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
@@ -72,6 +74,18 @@ export function startHttp(options: {
     if (url.pathname !== "/ws") {
       socket.destroy();
       return;
+    }
+    if (token) {
+      const clientToken =
+        url.searchParams.get("token") ??
+        (req.headers.authorization?.startsWith("Bearer ")
+          ? req.headers.authorization.slice(7).trim()
+          : undefined);
+      if (clientToken !== token) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       hub.accept(ws);
@@ -100,29 +114,30 @@ export function startHttp(options: {
   };
 }
 
-function parseRoute(pathname: string): { browserFromPath?: string; cleanPath: string } {
-  // Supports /b/:browserId/... or /browser/:browserId/...
-  const match = pathname.match(/^\/(?:b|browser)\/([^/]+)(\/.*)?$/);
-  if (match) {
-    const browserFromPath = decodeURIComponent(match[1]!);
-    const cleanPath = match[2] || "/";
-    return { browserFromPath, cleanPath };
-  }
-  return { cleanPath: pathname };
-}
-
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   hub: Hub,
   port: number,
+  token?: string,
 ): Promise<void> {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
-  const { browserFromPath, cleanPath } = parseRoute(url.pathname);
-  const browserParam = url.searchParams.get("browser") ?? browserFromPath ?? undefined;
+
+  // Authentication check if token is configured
+  if (token && req.method !== "OPTIONS") {
+    const clientToken =
+      url.searchParams.get("token") ??
+      (req.headers.authorization?.startsWith("Bearer ")
+        ? req.headers.authorization.slice(7).trim()
+        : undefined);
+    if (clientToken !== token) {
+      sendJson(res, 401, { ok: false, error: "unauthorized: invalid or missing token" });
+      return;
+    }
+  }
 
   try {
-    if (req.method === "GET" && cleanPath === "/status") {
+    if (req.method === "GET" && url.pathname === "/status") {
       const browsers = hub.list();
       sendJson(res, 200, {
         ok: true,
@@ -135,10 +150,10 @@ async function handle(
       });
       return;
     }
-    if (req.method === "POST" && cleanPath === "/command") {
+    if (req.method === "POST" && url.pathname === "/command") {
       const body = await readBody(req);
       const command = parseCommand(body);
-      const targetBrowser = command.browser ?? browserParam;
+      const targetBrowser = command.browser ?? (url.searchParams.get("browser") || undefined);
       try {
         const slot = hub.resolve(targetBrowser);
         const data = await dispatchCommand(
@@ -155,10 +170,10 @@ async function handle(
       }
       return;
     }
-    if (req.method === "POST" && cleanPath === "/run") {
+    if (req.method === "POST" && url.pathname === "/run") {
       const body = await readBody(req);
       const request = parseRun(body);
-      const targetBrowser = request.browser ?? browserParam;
+      const targetBrowser = request.browser ?? (url.searchParams.get("browser") || undefined);
       const outcome = await executeRun({
         source: request.source,
         timeoutMs: request.timeoutMs,
@@ -167,12 +182,15 @@ async function handle(
       sendJson(res, 200, outcome);
       return;
     }
-    if (cleanPath === "/mcp") {
+
+    // Match /mcp or /mcp/:browser_id
+    const mcpMatch = url.pathname.match(/^\/mcp(?:\/([^/]+))?$/);
+    if (mcpMatch) {
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         });
         res.end();
         return;
@@ -190,8 +208,10 @@ async function handle(
           });
           return;
         }
+        const browserIdFromPath = mcpMatch[1] ? decodeURIComponent(mcpMatch[1]) : undefined;
+        const targetBrowser = browserIdFromPath ?? (url.searchParams.get("browser") || undefined);
         try {
-          const outcome = await handleMcpMessage(msg, hub, browserParam);
+          const outcome = await handleMcpMessage(msg, hub, targetBrowser);
           if (!outcome) {
             // Notification: 202 Accepted
             res.writeHead(202, {

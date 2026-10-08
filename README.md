@@ -129,14 +129,15 @@ The background service exposes the following endpoints on `http://127.0.0.1:1258
 |---|---|---|---|
 | `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | Runs a JavaScript automation script in Node.js |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | Executes a single browser command directly |
-| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint over HTTP POST (JSON-RPC) |
+| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint over HTTP POST (auto-resolves browser) |
+| `POST` | `/mcp/{browser_id}` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint pinned directly to `{browser_id}` |
 | `GET` | `/status` | None | Returns connected browsers and active sessions |
 | `GET` | `/ws` | None | WebSocket connection used by the browser extension |
 
-> **Tip:** You can connect MCP clients remotely via HTTP POST without running a local process:
-> - **Query binding:** `http://127.0.0.1:12580/mcp?browser=work`
-> - **Path prefix binding:** `http://127.0.0.1:12580/b/work/mcp`
-> - Commands / Run: `http://127.0.0.1:12580/b/work/run`, `http://127.0.0.1:12580/b/work/command`
+> **Authentication & Remote MCP Tips:**
+> - **Pin Browser via Path:** Connect directly to `http://127.0.0.1:12580/mcp/work` to lock interactions to the `work` browser.
+> - **Token Protection:** Start the daemon with `--token <secret>` (or `LATCH_TOKEN=<secret>`). Then authenticate via query param `?token=<secret>` or header `Authorization: Bearer <secret>`.
+> - Example URL: `http://127.0.0.1:12580/mcp/work?token=your_secret_here`
 
 #### Example: Running an automation script (`POST /run`)
 
