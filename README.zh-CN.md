@@ -94,14 +94,29 @@ pnpm --filter @latch/daemon mcp
 }
 ```
 
-*(如使用本地克隆代码，则为：`"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp"]`)*
+**固定使用特定浏览器（Browser ID）：**
+如果同时打开了多个 Chrome 窗口 / Profile，并希望该 MCP 服务固定只操作特定浏览器，可加上 `--browser <id>` 参数：
+
+```json
+{
+  "mcpServers": {
+    "latch": {
+      "command": "npx",
+      "args": ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
+    }
+  }
+}
+```
+*(固定后，AI 在调用任何工具时均会自动路由到该浏览器，且无需在每次请求中指定 `browser` 参数)*
+
+*(如使用本地克隆代码，则为：`"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp", "--", "--browser", "work"]`)*
 
 **Grok（`.grok/config.toml`）：**
 
 ```toml
 [mcp_servers.latch]
 command = "npx"
-args = ["github:p3psi-boo/latch", "mcp"]
+args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 ```
 
 ---

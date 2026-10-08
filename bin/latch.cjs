@@ -4376,7 +4376,7 @@ var BROWSER_PROP = {
   type: "string",
   description: "User-defined browser id from the extension options. Required when more than one Chrome is connected. Omit when only one is connected."
 };
-function toolList() {
+function toolList(fixedBrowserId) {
   const chromeTools = TOOL_NAMES.map((name) => ({
     name,
     description: TOOL_DESCRIPTIONS[name],
@@ -4387,7 +4387,7 @@ function toolList() {
           type: "string",
           description: "Task id. One task = one session = one tab group. Required."
         },
-        browser: BROWSER_PROP
+        ...fixedBrowserId ? {} : { browser: BROWSER_PROP }
       },
       additionalProperties: true,
       required: ["session"]
@@ -4408,7 +4408,7 @@ function toolList() {
             type: "string",
             description: "Task id. One task = one session = one tab group. Required."
           },
-          browser: BROWSER_PROP,
+          ...fixedBrowserId ? {} : { browser: BROWSER_PROP },
           timeoutMs: { type: "number", description: "Abort the script after this many ms. Default 60000." }
         },
         required: ["source", "session"]
@@ -4416,7 +4416,7 @@ function toolList() {
     },
     {
       name: "list_browsers",
-      description: "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
+      description: fixedBrowserId ? `Pinned to browser "${fixedBrowserId}". List Latch browsers connected to this daemon.` : "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
       inputSchema: { type: "object", properties: {} }
     },
     ...chromeTools
@@ -4436,15 +4436,17 @@ function replyError(id, message) {
   });
   process.stdout.write(payload + "\n");
 }
-function startMcp(hub2) {
+function startMcp(hub2, fixedBrowserId) {
   const rl = (0, import_node_readline.createInterface)({ input: process.stdin });
   rl.on("line", (line) => {
     if (!line.trim()) return;
-    void handleLine(line, hub2);
+    void handleLine(line, hub2, fixedBrowserId);
   });
-  console.error("[latch] MCP stdio listening");
+  console.error(
+    fixedBrowserId ? `[latch] MCP stdio listening (pinned to browser "${fixedBrowserId}")` : "[latch] MCP stdio listening"
+  );
 }
-async function handleLine(line, hub2) {
+async function handleLine(line, hub2, fixedBrowserId) {
   let msg;
   try {
     msg = JSON.parse(line);
@@ -4463,7 +4465,7 @@ async function handleLine(line, hub2) {
     }
     if (method === "notifications/initialized" || method === "notifications/cancelled") return;
     if (method === "tools/list") {
-      reply(msg.id, { tools: toolList() });
+      reply(msg.id, { tools: toolList(fixedBrowserId) });
       return;
     }
     if (method === "ping") {
@@ -4483,7 +4485,7 @@ async function handleLine(line, hub2) {
       if (name === "run") {
         const session2 = typeof rawArgs.session === "string" ? rawArgs.session : "";
         const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
-        const browser2 = typeof rawArgs.browser === "string" ? rawArgs.browser : void 0;
+        const browser2 = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
         if (!session2.trim()) throw new Error("session is required");
         const outcome = await executeRun({
           source,
@@ -4497,7 +4499,7 @@ async function handleLine(line, hub2) {
         return;
       }
       const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-      const browser = typeof rawArgs.browser === "string" ? rawArgs.browser : void 0;
+      const browser = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
       const { session: _ignored, browser: _browser, ...args } = rawArgs;
       const slot = hub2.resolve(browser);
       const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
@@ -4522,7 +4524,12 @@ function usage() {
 
 Usage:
   latch start  [--port 12580] [--host 127.0.0.1]
-  latch mcp    [--port 12580] [--host 127.0.0.1]   also MCP on stdio
+  latch mcp    [--port 12580] [--host 127.0.0.1] [--browser <id>]   also MCP on stdio
+
+Options:
+  --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
+  --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
 Agents POST /run (or MCP tool run) with a JavaScript source string. Helpers
 call the same tools as POST /command. Each extension sets a browser id in
@@ -4547,6 +4554,9 @@ function portFromArgs(argv2) {
 function hostFromArgs(argv2) {
   return flag(argv2, "--host") ?? process.env.LATCH_HOST ?? DEFAULT_HOST;
 }
+function browserFromArgs(argv2) {
+  return flag(argv2, "--browser") ?? process.env.LATCH_BROWSER;
+}
 var argv = process.argv.slice(2);
 var command = argv[0] ?? "start";
 if (command === "-h" || command === "--help") usage();
@@ -4559,4 +4569,7 @@ if (host !== "127.0.0.1" && host !== "localhost") {
 }
 var hub = new Hub();
 startHttp({ hub, host, port: portFromArgs(argv) });
-if (command === "mcp") startMcp(hub);
+if (command === "mcp") {
+  const fixedBrowserId = browserFromArgs(argv);
+  startMcp(hub, fixedBrowserId);
+}

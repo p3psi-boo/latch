@@ -94,14 +94,29 @@ pnpm --filter @latch/daemon mcp
 }
 ```
 
-*(Or use local repository command: `"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp"]`)*
+**Pin to a specific Browser ID:**
+If you run multiple Chrome profiles and want this MCP server to only interact with a specific browser, add `--browser <id>`:
+
+```json
+{
+  "mcpServers": {
+    "latch": {
+      "command": "npx",
+      "args": ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
+    }
+  }
+}
+```
+*(When pinned, the AI will automatically use this browser profile without needing to pass the `browser` argument in every tool call).*
+
+*(Or use local repository command: `"command": "pnpm", "args": ["--filter", "@latch/daemon", "mcp", "--", "--browser", "work"]`)*
 
 **Grok (`.grok/config.toml`):**
 
 ```toml
 [mcp_servers.latch]
 command = "npx"
-args = ["github:p3psi-boo/latch", "mcp"]
+args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 ```
 
 ---

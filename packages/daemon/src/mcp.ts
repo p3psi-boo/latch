@@ -35,7 +35,7 @@ const BROWSER_PROP = {
     'User-defined browser id from the extension options. Required when more than one Chrome is connected. Omit when only one is connected.',
 };
 
-function toolList() {
+function toolList(fixedBrowserId?: string) {
   const chromeTools = TOOL_NAMES.map((name) => ({
     name,
     description: TOOL_DESCRIPTIONS[name],
@@ -46,7 +46,9 @@ function toolList() {
           type: "string",
           description: "Task id. One task = one session = one tab group. Required.",
         },
-        browser: BROWSER_PROP,
+        ...(fixedBrowserId
+          ? {}
+          : { browser: BROWSER_PROP }),
       },
       additionalProperties: true,
       required: ["session"],
@@ -69,7 +71,9 @@ function toolList() {
             type: "string",
             description: "Task id. One task = one session = one tab group. Required.",
           },
-          browser: BROWSER_PROP,
+          ...(fixedBrowserId
+            ? {}
+            : { browser: BROWSER_PROP }),
           timeoutMs: { type: "number", description: "Abort the script after this many ms. Default 60000." },
         },
         required: ["source", "session"],
@@ -77,8 +81,9 @@ function toolList() {
     },
     {
       name: "list_browsers",
-      description:
-        "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
+      description: fixedBrowserId
+        ? `Pinned to browser "${fixedBrowserId}". List Latch browsers connected to this daemon.`
+        : "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
       inputSchema: { type: "object", properties: {} },
     },
     ...chromeTools,
@@ -101,16 +106,20 @@ function replyError(id: number | string | null | undefined, message: string): vo
   process.stdout.write(payload + "\n");
 }
 
-export function startMcp(hub: Hub): void {
+export function startMcp(hub: Hub, fixedBrowserId?: string): void {
   const rl = createInterface({ input: process.stdin });
   rl.on("line", (line) => {
     if (!line.trim()) return;
-    void handleLine(line, hub);
+    void handleLine(line, hub, fixedBrowserId);
   });
-  console.error("[latch] MCP stdio listening");
+  console.error(
+    fixedBrowserId
+      ? `[latch] MCP stdio listening (pinned to browser "${fixedBrowserId}")`
+      : "[latch] MCP stdio listening",
+  );
 }
 
-async function handleLine(line: string, hub: Hub): Promise<void> {
+async function handleLine(line: string, hub: Hub, fixedBrowserId?: string): Promise<void> {
   let msg: JsonRpc;
   try {
     msg = JSON.parse(line) as JsonRpc;
@@ -129,7 +138,7 @@ async function handleLine(line: string, hub: Hub): Promise<void> {
     }
     if (method === "notifications/initialized" || method === "notifications/cancelled") return;
     if (method === "tools/list") {
-      reply(msg.id, { tools: toolList() });
+      reply(msg.id, { tools: toolList(fixedBrowserId) });
       return;
     }
     if (method === "ping") {
@@ -152,7 +161,8 @@ async function handleLine(line: string, hub: Hub): Promise<void> {
       if (name === "run") {
         const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
         const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
-        const browser = typeof rawArgs.browser === "string" ? rawArgs.browser : undefined;
+        const browser =
+          fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
         if (!session.trim()) throw new Error("session is required");
         const outcome = await executeRun({
           source,
@@ -166,7 +176,8 @@ async function handleLine(line: string, hub: Hub): Promise<void> {
         return;
       }
       const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-      const browser = typeof rawArgs.browser === "string" ? rawArgs.browser : undefined;
+      const browser =
+        fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
       const { session: _ignored, browser: _browser, ...args } = rawArgs;
       const slot = hub.resolve(browser);
       const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);

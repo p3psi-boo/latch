@@ -9,7 +9,12 @@ function usage(): never {
 
 Usage:
   latch start  [--port 12580] [--host 127.0.0.1]
-  latch mcp    [--port 12580] [--host 127.0.0.1]   also MCP on stdio
+  latch mcp    [--port 12580] [--host 127.0.0.1] [--browser <id>]   also MCP on stdio
+
+Options:
+  --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
+  --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
 Agents POST /run (or MCP tool run) with a JavaScript source string. Helpers
 call the same tools as POST /command. Each extension sets a browser id in
@@ -38,6 +43,10 @@ function hostFromArgs(argv: string[]): string {
   return flag(argv, "--host") ?? process.env.LATCH_HOST ?? DEFAULT_HOST;
 }
 
+function browserFromArgs(argv: string[]): string | undefined {
+  return flag(argv, "--browser") ?? process.env.LATCH_BROWSER;
+}
+
 const argv = process.argv.slice(2);
 const command = argv[0] ?? "start";
 if (command === "-h" || command === "--help") usage();
@@ -52,4 +61,7 @@ if (host !== "127.0.0.1" && host !== "localhost") {
 
 const hub = new Hub();
 startHttp({ hub, host, port: portFromArgs(argv) });
-if (command === "mcp") startMcp(hub);
+if (command === "mcp") {
+  const fixedBrowserId = browserFromArgs(argv);
+  startMcp(hub, fixedBrowserId);
+}
