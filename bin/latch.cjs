@@ -4324,40 +4324,6 @@ async function handle(req, res, hub2, port) {
       sendJson(res, 200, outcome);
       return;
     }
-    if (cleanPath === "/sse") {
-      if (req.method === "GET") {
-        const sessionId = Math.random().toString(36).slice(2);
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-          "Access-Control-Allow-Origin": "*"
-        });
-        const prefix = browserFromPath ? `/b/${encodeURIComponent(browserFromPath)}` : "";
-        const q = !browserFromPath && browserParam ? `&browser=${encodeURIComponent(browserParam)}` : "";
-        const postEndpoint = `${prefix}/mcp?sessionId=${sessionId}${q}`;
-        res.write(`event: endpoint
-data: ${postEndpoint}
-
-`);
-        const pingInterval = setInterval(() => {
-          res.write(": ping\n\n");
-        }, 15e3);
-        req.on("close", () => {
-          clearInterval(pingInterval);
-        });
-        return;
-      }
-      if (req.method === "OPTIONS") {
-        res.writeHead(204, {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type"
-        });
-        res.end();
-        return;
-      }
-    }
     if (cleanPath === "/mcp") {
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
