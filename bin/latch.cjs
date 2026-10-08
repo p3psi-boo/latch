@@ -4010,6 +4010,184 @@ function bindHubDispatch(hub2, session, browser) {
   };
 }
 
+// packages/daemon/src/mcp.ts
+var import_node_readline = require("node:readline");
+var TOOL_DESCRIPTIONS = {
+  navigate: "Open a URL in the current Latch session tab, or a new tab.",
+  find_tab: "Select a tab this session opened, or borrow the user's active tab (active:true).",
+  snapshot: "Accessibility tree of the current tab, with @e refs for click/fill.",
+  click: "Move the real mouse along a timed path, then click. Sites see mousemove.",
+  fill: "Click, then Input.insertText the whole string (DOM value fallback if verify fails).",
+  scroll: "Wheel the page (deltaX/deltaY, smoothstep steps) or scroll a selector into view.",
+  drag: "Drag from one selector to another. Real mouse path with the button held.",
+  type: "Type text with keyDown/keyUp per character. Optional selector focuses first; delayMs is optional.",
+  evaluate: "Run JavaScript in the page (async/await allowed).",
+  cdp: "Raw Chrome DevTools Protocol method on the current tab.",
+  screenshot: "Capture the viewport or an element. Returns a file path.",
+  list_tabs: "List tabs owned or borrowed by this session.",
+  close_tab: "Close the current tab in this session.",
+  close_session: "Close every tab this session opened.",
+  wait: "Wait until text or a selector appears (or until timeoutMs)."
+};
+var BROWSER_PROP = {
+  type: "string",
+  description: "User-defined browser id from the extension options. Required when more than one Chrome is connected. Omit when only one is connected."
+};
+function toolList(fixedBrowserId) {
+  const chromeTools = TOOL_NAMES.map((name) => ({
+    name,
+    description: TOOL_DESCRIPTIONS[name],
+    inputSchema: {
+      type: "object",
+      properties: {
+        session: {
+          type: "string",
+          description: "Task id. One task = one session = one tab group. Required."
+        },
+        ...fixedBrowserId ? {} : { browser: BROWSER_PROP }
+      },
+      additionalProperties: true,
+      required: ["session"]
+    }
+  }));
+  return [
+    {
+      name: "run",
+      description: "Default browser workflow. Run a JavaScript source string with injected page/cliLog/task helpers. Snapshot, click/fill with @e refs, wait, snapshot again. One session per script.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          source: {
+            type: "string",
+            description: 'JavaScript body. Top-level await ok. Helpers: page.snapshot(), page.click("@e1"), page.fill(sel, value), page.scroll({deltaY}), page.drag(from, to), page.type(text, {selector?}), page.wait({text|selector}), page.goto(url), cliLog(...), task.page("p1").'
+          },
+          session: {
+            type: "string",
+            description: "Task id. One task = one session = one tab group. Required."
+          },
+          ...fixedBrowserId ? {} : { browser: BROWSER_PROP },
+          timeoutMs: { type: "number", description: "Abort the script after this many ms. Default 60000." }
+        },
+        required: ["source", "session"]
+      }
+    },
+    {
+      name: "list_browsers",
+      description: fixedBrowserId ? `Pinned to browser "${fixedBrowserId}". List Latch browsers connected to this daemon.` : "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
+      inputSchema: { type: "object", properties: {} }
+    },
+    ...chromeTools
+  ];
+}
+function reply(id, result) {
+  if (id === void 0 || id === null) return;
+  const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
+  process.stdout.write(payload + "\n");
+}
+function replyError(id, message, code = -32e3) {
+  if (id === void 0 || id === null) return;
+  const payload = JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    error: { code, message }
+  });
+  process.stdout.write(payload + "\n");
+}
+async function handleMcpMessage(msg, hub2, fixedBrowserId) {
+  const method = msg.method ?? "";
+  if (method === "initialize") {
+    return {
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "latch", version: "0.1.0" }
+      }
+    };
+  }
+  if (method === "notifications/initialized" || method === "notifications/cancelled") {
+    return null;
+  }
+  if (method === "tools/list") {
+    return { result: { tools: toolList(fixedBrowserId) } };
+  }
+  if (method === "ping") {
+    return { result: {} };
+  }
+  if (method === "tools/call") {
+    const params = msg.params ?? {};
+    const name = String(params.name ?? "");
+    const rawArgs = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments : {};
+    if (name === "list_browsers") {
+      return {
+        result: {
+          content: [{ type: "text", text: JSON.stringify(hub2.list()) }]
+        }
+      };
+    }
+    if (name === "run") {
+      const session2 = typeof rawArgs.session === "string" ? rawArgs.session : "";
+      const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
+      const browser2 = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
+      if (!session2.trim()) throw new Error("session is required");
+      const outcome = await executeRun({
+        source,
+        timeoutMs: parseTimeoutMs(rawArgs.timeoutMs),
+        dispatch: bindHubDispatch(hub2, session2, browser2)
+      });
+      return {
+        result: {
+          content: [{ type: "text", text: JSON.stringify(outcome) }],
+          ...outcome.ok ? {} : { isError: true }
+        }
+      };
+    }
+    const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
+    const browser = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
+    const { session: _ignored, browser: _browser, ...args } = rawArgs;
+    const slot = hub2.resolve(browser);
+    const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
+    return {
+      result: {
+        content: [{ type: "text", text: JSON.stringify(data) }]
+      }
+    };
+  }
+  return { error: { code: -32601, message: `Method not found: ${method}` } };
+}
+function startMcp(hub2, fixedBrowserId) {
+  const rl = (0, import_node_readline.createInterface)({ input: process.stdin });
+  rl.on("line", (line) => {
+    if (!line.trim()) return;
+    void handleLine(line, hub2, fixedBrowserId);
+  });
+  console.error(
+    fixedBrowserId ? `[latch] MCP stdio listening (pinned to browser "${fixedBrowserId}")` : "[latch] MCP stdio listening"
+  );
+}
+async function handleLine(line, hub2, fixedBrowserId) {
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return;
+  }
+  try {
+    const response = await handleMcpMessage(msg, hub2, fixedBrowserId);
+    if (!response) return;
+    if (response.error) {
+      replyError(msg.id, response.error.message, response.error.code);
+    } else {
+      reply(msg.id, response.result);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    reply(msg.id, {
+      content: [{ type: "text", text: message }],
+      isError: true
+    });
+  }
+}
+
 // packages/daemon/src/http.ts
 var MAX_BODY = 12 * 1024 * 1024;
 var DAEMON_VERSION = "0.1.0";
@@ -4132,6 +4310,100 @@ async function handle(req, res, hub2, port) {
       });
       sendJson(res, 200, outcome);
       return;
+    }
+    if (url.pathname === "/sse") {
+      if (req.method === "GET") {
+        const browserParam = url.searchParams.get("browser") ?? void 0;
+        const sessionId = Math.random().toString(36).slice(2);
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": "*"
+        });
+        const postEndpoint = `/mcp?sessionId=${sessionId}${browserParam ? `&browser=${encodeURIComponent(browserParam)}` : ""}`;
+        res.write(`event: endpoint
+data: ${postEndpoint}
+
+`);
+        const pingInterval = setInterval(() => {
+          res.write(": ping\n\n");
+        }, 15e3);
+        req.on("close", () => {
+          clearInterval(pingInterval);
+        });
+        return;
+      }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        });
+        res.end();
+        return;
+      }
+    }
+    if (url.pathname === "/mcp") {
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type"
+        });
+        res.end();
+        return;
+      }
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        let msg;
+        try {
+          msg = JSON.parse(body);
+        } catch {
+          sendJson(res, 400, {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32700, message: "Parse error" }
+          });
+          return;
+        }
+        const browserParam = url.searchParams.get("browser") ?? void 0;
+        try {
+          const outcome = await handleMcpMessage(msg, hub2, browserParam);
+          if (!outcome) {
+            res.writeHead(202, {
+              "Access-Control-Allow-Origin": "*"
+            });
+            res.end();
+            return;
+          }
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
+          });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id ?? null,
+              ...outcome.error ? { error: outcome.error } : { result: outcome.result }
+            })
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
+          });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id ?? null,
+              error: { code: -32e3, message }
+            })
+          );
+        }
+        return;
+      }
     }
     sendJson(res, 404, { ok: false, error: "not found" });
   } catch (error) {
@@ -4351,171 +4623,6 @@ function describeSlot(slot) {
 function formatKnown(slots, connected) {
   const listed = (items) => items.length ? items.map(describeSlot).join(", ") : "(none)";
   return `connected: ${listed(connected)}; known: ${listed(slots)}`;
-}
-
-// packages/daemon/src/mcp.ts
-var import_node_readline = require("node:readline");
-var TOOL_DESCRIPTIONS = {
-  navigate: "Open a URL in the current Latch session tab, or a new tab.",
-  find_tab: "Select a tab this session opened, or borrow the user's active tab (active:true).",
-  snapshot: "Accessibility tree of the current tab, with @e refs for click/fill.",
-  click: "Move the real mouse along a timed path, then click. Sites see mousemove.",
-  fill: "Click, then Input.insertText the whole string (DOM value fallback if verify fails).",
-  scroll: "Wheel the page (deltaX/deltaY, smoothstep steps) or scroll a selector into view.",
-  drag: "Drag from one selector to another. Real mouse path with the button held.",
-  type: "Type text with keyDown/keyUp per character. Optional selector focuses first; delayMs is optional.",
-  evaluate: "Run JavaScript in the page (async/await allowed).",
-  cdp: "Raw Chrome DevTools Protocol method on the current tab.",
-  screenshot: "Capture the viewport or an element. Returns a file path.",
-  list_tabs: "List tabs owned or borrowed by this session.",
-  close_tab: "Close the current tab in this session.",
-  close_session: "Close every tab this session opened.",
-  wait: "Wait until text or a selector appears (or until timeoutMs)."
-};
-var BROWSER_PROP = {
-  type: "string",
-  description: "User-defined browser id from the extension options. Required when more than one Chrome is connected. Omit when only one is connected."
-};
-function toolList(fixedBrowserId) {
-  const chromeTools = TOOL_NAMES.map((name) => ({
-    name,
-    description: TOOL_DESCRIPTIONS[name],
-    inputSchema: {
-      type: "object",
-      properties: {
-        session: {
-          type: "string",
-          description: "Task id. One task = one session = one tab group. Required."
-        },
-        ...fixedBrowserId ? {} : { browser: BROWSER_PROP }
-      },
-      additionalProperties: true,
-      required: ["session"]
-    }
-  }));
-  return [
-    {
-      name: "run",
-      description: "Default browser workflow. Run a JavaScript source string with injected page/cliLog/task helpers. Snapshot, click/fill with @e refs, wait, snapshot again. One session per script.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          source: {
-            type: "string",
-            description: 'JavaScript body. Top-level await ok. Helpers: page.snapshot(), page.click("@e1"), page.fill(sel, value), page.scroll({deltaY}), page.drag(from, to), page.type(text, {selector?}), page.wait({text|selector}), page.goto(url), cliLog(...), task.page("p1").'
-          },
-          session: {
-            type: "string",
-            description: "Task id. One task = one session = one tab group. Required."
-          },
-          ...fixedBrowserId ? {} : { browser: BROWSER_PROP },
-          timeoutMs: { type: "number", description: "Abort the script after this many ms. Default 60000." }
-        },
-        required: ["source", "session"]
-      }
-    },
-    {
-      name: "list_browsers",
-      description: fixedBrowserId ? `Pinned to browser "${fixedBrowserId}". List Latch browsers connected to this daemon.` : "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
-      inputSchema: { type: "object", properties: {} }
-    },
-    ...chromeTools
-  ];
-}
-function reply(id, result) {
-  if (id === void 0 || id === null) return;
-  const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
-  process.stdout.write(payload + "\n");
-}
-function replyError(id, message) {
-  if (id === void 0 || id === null) return;
-  const payload = JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    error: { code: -32e3, message }
-  });
-  process.stdout.write(payload + "\n");
-}
-function startMcp(hub2, fixedBrowserId) {
-  const rl = (0, import_node_readline.createInterface)({ input: process.stdin });
-  rl.on("line", (line) => {
-    if (!line.trim()) return;
-    void handleLine(line, hub2, fixedBrowserId);
-  });
-  console.error(
-    fixedBrowserId ? `[latch] MCP stdio listening (pinned to browser "${fixedBrowserId}")` : "[latch] MCP stdio listening"
-  );
-}
-async function handleLine(line, hub2, fixedBrowserId) {
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return;
-  }
-  const method = msg.method ?? "";
-  try {
-    if (method === "initialize") {
-      reply(msg.id, {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "latch", version: "0.1.0" }
-      });
-      return;
-    }
-    if (method === "notifications/initialized" || method === "notifications/cancelled") return;
-    if (method === "tools/list") {
-      reply(msg.id, { tools: toolList(fixedBrowserId) });
-      return;
-    }
-    if (method === "ping") {
-      reply(msg.id, {});
-      return;
-    }
-    if (method === "tools/call") {
-      const params = msg.params ?? {};
-      const name = String(params.name ?? "");
-      const rawArgs = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments : {};
-      if (name === "list_browsers") {
-        reply(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(hub2.list()) }]
-        });
-        return;
-      }
-      if (name === "run") {
-        const session2 = typeof rawArgs.session === "string" ? rawArgs.session : "";
-        const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
-        const browser2 = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
-        if (!session2.trim()) throw new Error("session is required");
-        const outcome = await executeRun({
-          source,
-          timeoutMs: parseTimeoutMs(rawArgs.timeoutMs),
-          dispatch: bindHubDispatch(hub2, session2, browser2)
-        });
-        reply(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(outcome) }],
-          ...outcome.ok ? {} : { isError: true }
-        });
-        return;
-      }
-      const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-      const browser = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
-      const { session: _ignored, browser: _browser, ...args } = rawArgs;
-      const slot = hub2.resolve(browser);
-      const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
-      reply(msg.id, {
-        content: [{ type: "text", text: JSON.stringify(data) }]
-      });
-      return;
-    }
-    if (msg.id !== void 0) replyError(msg.id, `unknown method: ${method}`);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    reply(msg.id, {
-      content: [{ type: "text", text: message }],
-      isError: true
-    });
-  }
 }
 
 // packages/daemon/src/cli.ts

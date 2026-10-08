@@ -129,8 +129,14 @@ The background service exposes the following endpoints on `http://127.0.0.1:1258
 |---|---|---|---|
 | `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | Runs a JavaScript automation script in Node.js |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | Executes a single browser command directly |
+| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint over HTTP POST (JSON-RPC) |
+| `GET` | `/sse` | None | Remote MCP endpoint over Server-Sent Events (SSE) |
 | `GET` | `/status` | None | Returns connected browsers and active sessions |
 | `GET` | `/ws` | None | WebSocket connection used by the browser extension |
+
+> **Tip:** You can connect MCP clients remotely via HTTP/SSE without running a local process:
+> - SSE URL: `http://127.0.0.1:12580/sse` (or `http://127.0.0.1:12580/sse?browser=work` to pin a browser)
+> - HTTP POST URL: `http://127.0.0.1:12580/mcp` (or `http://127.0.0.1:12580/mcp?browser=work`)
 
 #### Example: Running an automation script (`POST /run`)
 

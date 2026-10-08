@@ -8,6 +8,7 @@ import {
 import { WebSocketServer } from "ws";
 import { dispatchCommand } from "./dispatch.ts";
 import type { Hub } from "./hub.ts";
+import { handleMcpMessage } from "./mcp.ts";
 import { bindHubDispatch, executeRun, parseTimeoutMs } from "./run.ts";
 
 const MAX_BODY = 12 * 1024 * 1024;
@@ -149,6 +150,100 @@ async function handle(
       });
       sendJson(res, 200, outcome);
       return;
+    }
+    if (url.pathname === "/sse") {
+      if (req.method === "GET") {
+        const browserParam = url.searchParams.get("browser") ?? undefined;
+        const sessionId = Math.random().toString(36).slice(2);
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+        const postEndpoint = `/mcp?sessionId=${sessionId}${browserParam ? `&browser=${encodeURIComponent(browserParam)}` : ""}`;
+        res.write(`event: endpoint\ndata: ${postEndpoint}\n\n`);
+
+        const pingInterval = setInterval(() => {
+          res.write(": ping\n\n");
+        }, 15000);
+
+        req.on("close", () => {
+          clearInterval(pingInterval);
+        });
+        return;
+      }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        });
+        res.end();
+        return;
+      }
+    }
+    if (url.pathname === "/mcp") {
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        });
+        res.end();
+        return;
+      }
+      if (req.method === "POST") {
+        const body = await readBody(req);
+        let msg: Record<string, unknown>;
+        try {
+          msg = JSON.parse(body) as Record<string, unknown>;
+        } catch {
+          sendJson(res, 400, {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32700, message: "Parse error" },
+          });
+          return;
+        }
+        const browserParam = url.searchParams.get("browser") ?? undefined;
+        try {
+          const outcome = await handleMcpMessage(msg, hub, browserParam);
+          if (!outcome) {
+            // Notification: 202 Accepted
+            res.writeHead(202, {
+              "Access-Control-Allow-Origin": "*",
+            });
+            res.end();
+            return;
+          }
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id ?? null,
+              ...(outcome.error ? { error: outcome.error } : { result: outcome.result }),
+            }),
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+          });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id ?? null,
+              error: { code: -32000, message },
+            }),
+          );
+        }
+        return;
+      }
     }
     sendJson(res, 404, { ok: false, error: "not found" });
   } catch (error) {

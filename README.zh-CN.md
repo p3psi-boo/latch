@@ -129,8 +129,14 @@ args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 |---|---|---|---|
 | `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | 在 Node.js 环境中执行自动化脚本 |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | 直接调用单个页面操作指令 |
+| `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST (JSON-RPC) MCP 接口 |
+| `GET` | `/sse` | 无 | 远程 Server-Sent Events (SSE) MCP 接口 |
 | `GET` | `/status` | 无 | 查看当前连接的浏览器与会话列表 |
 | `GET` | `/ws` | 无 | 供浏览器扩展建立的 WebSocket 连接 |
+
+> **提示：** 可以直接通过 HTTP/SSE 远程接入 MCP，无需在调用方本地启动进程：
+> - SSE 接入地址：`http://127.0.0.1:12580/sse`（可拼接 `?browser=work` 固定特定浏览器）
+> - HTTP POST 接入地址：`http://127.0.0.1:12580/mcp`（可拼接 `?browser=work` 固定特定浏览器）
 
 #### 示例 1：执行自动化脚本 (`POST /run`)
 

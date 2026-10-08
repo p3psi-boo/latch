@@ -96,14 +96,89 @@ function reply(id: number | string | null | undefined, result: unknown): void {
   process.stdout.write(payload + "\n");
 }
 
-function replyError(id: number | string | null | undefined, message: string): void {
+function replyError(
+  id: number | string | null | undefined,
+  message: string,
+  code = -32000,
+): void {
   if (id === undefined || id === null) return;
   const payload = JSON.stringify({
     jsonrpc: "2.0",
     id,
-    error: { code: -32000, message },
+    error: { code, message },
   });
   process.stdout.write(payload + "\n");
+}
+
+export async function handleMcpMessage(
+  msg: JsonRpc,
+  hub: Hub,
+  fixedBrowserId?: string,
+): Promise<{ result?: unknown; error?: { code: number; message: string } } | null> {
+  const method = msg.method ?? "";
+  if (method === "initialize") {
+    return {
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "latch", version: "0.1.0" },
+      },
+    };
+  }
+  if (method === "notifications/initialized" || method === "notifications/cancelled") {
+    return null;
+  }
+  if (method === "tools/list") {
+    return { result: { tools: toolList(fixedBrowserId) } };
+  }
+  if (method === "ping") {
+    return { result: {} };
+  }
+  if (method === "tools/call") {
+    const params = msg.params ?? {};
+    const name = String(params.name ?? "");
+    const rawArgs =
+      params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
+        ? (params.arguments as Record<string, unknown>)
+        : {};
+    if (name === "list_browsers") {
+      return {
+        result: {
+          content: [{ type: "text", text: JSON.stringify(hub.list()) }],
+        },
+      };
+    }
+    if (name === "run") {
+      const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
+      const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
+      const browser =
+        fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
+      if (!session.trim()) throw new Error("session is required");
+      const outcome = await executeRun({
+        source,
+        timeoutMs: parseTimeoutMs(rawArgs.timeoutMs),
+        dispatch: bindHubDispatch(hub, session, browser),
+      });
+      return {
+        result: {
+          content: [{ type: "text", text: JSON.stringify(outcome) }],
+          ...(outcome.ok ? {} : { isError: true }),
+        },
+      };
+    }
+    const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
+    const browser =
+      fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
+    const { session: _ignored, browser: _browser, ...args } = rawArgs;
+    const slot = hub.resolve(browser);
+    const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
+    return {
+      result: {
+        content: [{ type: "text", text: JSON.stringify(data) }],
+      },
+    };
+  }
+  return { error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
 export function startMcp(hub: Hub, fixedBrowserId?: string): void {
@@ -126,67 +201,14 @@ async function handleLine(line: string, hub: Hub, fixedBrowserId?: string): Prom
   } catch {
     return;
   }
-  const method = msg.method ?? "";
   try {
-    if (method === "initialize") {
-      reply(msg.id, {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "latch", version: "0.1.0" },
-      });
-      return;
+    const response = await handleMcpMessage(msg, hub, fixedBrowserId);
+    if (!response) return;
+    if (response.error) {
+      replyError(msg.id, response.error.message, response.error.code);
+    } else {
+      reply(msg.id, response.result);
     }
-    if (method === "notifications/initialized" || method === "notifications/cancelled") return;
-    if (method === "tools/list") {
-      reply(msg.id, { tools: toolList(fixedBrowserId) });
-      return;
-    }
-    if (method === "ping") {
-      reply(msg.id, {});
-      return;
-    }
-    if (method === "tools/call") {
-      const params = msg.params ?? {};
-      const name = String(params.name ?? "");
-      const rawArgs =
-        params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
-          ? (params.arguments as Record<string, unknown>)
-          : {};
-      if (name === "list_browsers") {
-        reply(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(hub.list()) }],
-        });
-        return;
-      }
-      if (name === "run") {
-        const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-        const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
-        const browser =
-          fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
-        if (!session.trim()) throw new Error("session is required");
-        const outcome = await executeRun({
-          source,
-          timeoutMs: parseTimeoutMs(rawArgs.timeoutMs),
-          dispatch: bindHubDispatch(hub, session, browser),
-        });
-        reply(msg.id, {
-          content: [{ type: "text", text: JSON.stringify(outcome) }],
-          ...(outcome.ok ? {} : { isError: true }),
-        });
-        return;
-      }
-      const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-      const browser =
-        fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : undefined);
-      const { session: _ignored, browser: _browser, ...args } = rawArgs;
-      const slot = hub.resolve(browser);
-      const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
-      reply(msg.id, {
-        content: [{ type: "text", text: JSON.stringify(data) }],
-      });
-      return;
-    }
-    if (msg.id !== undefined) replyError(msg.id, `unknown method: ${method}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     reply(msg.id, {
@@ -195,3 +217,4 @@ async function handleLine(line: string, hub: Hub, fixedBrowserId?: string): Prom
     });
   }
 }
+
