@@ -4236,7 +4236,8 @@ function startHttp(options) {
   });
   const wss = new import_websocket_server.default({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url ?? "/", `http://${host2}`);
+    const formattedHost = host2.includes(":") && !host2.startsWith("[") ? `[${host2}]` : host2;
+    const url = new URL(req.url ?? "/", `http://${formattedHost}`);
     if (url.pathname !== "/ws") {
       socket.destroy();
       return;

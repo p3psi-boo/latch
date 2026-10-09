@@ -70,7 +70,8 @@ export function startHttp(options: {
   });
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url ?? "/", `http://${host}`);
+    const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+    const url = new URL(req.url ?? "/", `http://${formattedHost}`);
     if (url.pathname !== "/ws") {
       socket.destroy();
       return;
