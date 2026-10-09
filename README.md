@@ -208,9 +208,13 @@ curl -s http://127.0.0.1:12580/status
 
 To host the service on a remote machine:
 
-1. Start the service bound to localhost:
+1. Start the service with host binding and optional token:
    ```bash
-   pnpm --filter @latch/daemon start -- --host 127.0.0.1 --port 12580
+   # Single host (default: 127.0.0.1)
+   latch start --host 127.0.0.1 --port 12580
+
+   # Or bind multiple specific IPv4 / IPv6 addresses:
+   latch start --host "127.0.0.1, ::1, 2409:xxxx:xxxx::1" --port 12580 --token <secret>
    ```
 2. Put a reverse proxy with TLS (such as Caddy or Nginx) in front of it on port 443. Configuration templates are available in the `deploy/` directory.
 3. In the extension settings, update the WebSocket URL to `wss://<your-domain>/ws`.

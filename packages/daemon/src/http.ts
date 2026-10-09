@@ -57,20 +57,28 @@ function parseCommand(raw: string): CommandRequest {
 
 export function startHttp(options: {
   hub: Hub;
-  host?: string;
+  host?: string | string[];
   port?: number;
   token?: string;
 }): { port: number; ready: Promise<number>; close: () => Promise<void> } {
-  const host = options.host ?? DEFAULT_HOST;
+  const rawHost = options.host ?? DEFAULT_HOST;
+  const hosts = (Array.isArray(rawHost) ? rawHost : rawHost.split(","))
+    .map((h) => h.trim())
+    .filter(Boolean);
+  if (hosts.length === 0) hosts.push(DEFAULT_HOST);
+
   const requested = options.port ?? DEFAULT_PORT;
   const hub = options.hub;
   const token = options.token;
-  const server = createServer((req, res) => {
-    void handle(req, res, hub, boundPort, token);
-  });
+
   const wss = new WebSocketServer({ noServer: true });
-  server.on("upgrade", (req, socket, head) => {
-    const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const servers: ReturnType<typeof createServer>[] = [];
+  let boundPort = requested;
+
+  const handleUpgrade = (req: IncomingMessage, socket: any, head: Buffer, currentHost: string) => {
+    const formattedHost = currentHost.includes(":") && !currentHost.startsWith("[")
+      ? `[${currentHost}]`
+      : currentHost;
     const url = new URL(req.url ?? "/", `http://${formattedHost}`);
     if (url.pathname !== "/ws") {
       socket.destroy();
@@ -91,17 +99,35 @@ export function startHttp(options: {
     wss.handleUpgrade(req, socket, head, (ws) => {
       hub.accept(ws);
     });
-  });
-  let boundPort = requested;
+  };
+
   const ready = new Promise<number>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(requested, host, () => {
-      const address = server.address();
-      boundPort = typeof address === "object" && address ? address.port : requested;
-      console.error(`[latch] listening http://${host}:${boundPort}`);
-      resolve(boundPort);
-    });
+    let started = 0;
+    for (const h of hosts) {
+      const s = createServer((req, res) => {
+        void handle(req, res, hub, boundPort, token);
+      });
+      s.on("upgrade", (req, socket, head) => {
+        handleUpgrade(req, socket, head, h);
+      });
+      s.once("error", (err) => {
+        servers.forEach((srv) => srv.close());
+        reject(err);
+      });
+      s.listen(requested, h, () => {
+        const address = s.address();
+        boundPort = typeof address === "object" && address ? address.port : requested;
+        const displayHost = h.includes(":") && !h.startsWith("[") ? `[${h}]` : h;
+        console.error(`[latch] listening http://${displayHost}:${boundPort}`);
+        started++;
+        if (started === hosts.length) {
+          resolve(boundPort);
+        }
+      });
+      servers.push(s);
+    }
   });
+
   return {
     get port() {
       return boundPort;
@@ -110,7 +136,18 @@ export function startHttp(options: {
     close: () =>
       new Promise((resolve, reject) => {
         wss.close();
-        server.close((error) => (error ? reject(error) : resolve()));
+        let closed = 0;
+        let lastErr: Error | undefined;
+        for (const s of servers) {
+          s.close((err) => {
+            if (err) lastErr = err;
+            closed++;
+            if (closed === servers.length) {
+              if (lastErr) reject(lastErr);
+              else resolve();
+            }
+          });
+        }
       }),
   };
 }

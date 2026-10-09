@@ -4227,16 +4227,17 @@ function parseCommand(raw) {
   };
 }
 function startHttp(options) {
-  const host2 = options.host ?? DEFAULT_HOST;
+  const rawHost = options.host ?? DEFAULT_HOST;
+  const hosts = (Array.isArray(rawHost) ? rawHost : rawHost.split(",")).map((h) => h.trim()).filter(Boolean);
+  if (hosts.length === 0) hosts.push(DEFAULT_HOST);
   const requested = options.port ?? DEFAULT_PORT;
   const hub2 = options.hub;
   const token2 = options.token;
-  const server = (0, import_node_http.createServer)((req, res) => {
-    void handle(req, res, hub2, boundPort, token2);
-  });
   const wss = new import_websocket_server.default({ noServer: true });
-  server.on("upgrade", (req, socket, head) => {
-    const formattedHost = host2.includes(":") && !host2.startsWith("[") ? `[${host2}]` : host2;
+  const servers = [];
+  let boundPort = requested;
+  const handleUpgrade = (req, socket, head, currentHost) => {
+    const formattedHost = currentHost.includes(":") && !currentHost.startsWith("[") ? `[${currentHost}]` : currentHost;
     const url = new URL(req.url ?? "/", `http://${formattedHost}`);
     if (url.pathname !== "/ws") {
       socket.destroy();
@@ -4253,16 +4254,32 @@ function startHttp(options) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       hub2.accept(ws);
     });
-  });
-  let boundPort = requested;
+  };
   const ready = new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(requested, host2, () => {
-      const address = server.address();
-      boundPort = typeof address === "object" && address ? address.port : requested;
-      console.error(`[latch] listening http://${host2}:${boundPort}`);
-      resolve(boundPort);
-    });
+    let started = 0;
+    for (const h of hosts) {
+      const s = (0, import_node_http.createServer)((req, res) => {
+        void handle(req, res, hub2, boundPort, token2);
+      });
+      s.on("upgrade", (req, socket, head) => {
+        handleUpgrade(req, socket, head, h);
+      });
+      s.once("error", (err) => {
+        servers.forEach((srv) => srv.close());
+        reject(err);
+      });
+      s.listen(requested, h, () => {
+        const address = s.address();
+        boundPort = typeof address === "object" && address ? address.port : requested;
+        const displayHost = h.includes(":") && !h.startsWith("[") ? `[${h}]` : h;
+        console.error(`[latch] listening http://${displayHost}:${boundPort}`);
+        started++;
+        if (started === hosts.length) {
+          resolve(boundPort);
+        }
+      });
+      servers.push(s);
+    }
   });
   return {
     get port() {
@@ -4271,7 +4288,18 @@ function startHttp(options) {
     ready,
     close: () => new Promise((resolve, reject) => {
       wss.close();
-      server.close((error) => error ? reject(error) : resolve());
+      let closed = 0;
+      let lastErr;
+      for (const s of servers) {
+        s.close((err) => {
+          if (err) lastErr = err;
+          closed++;
+          if (closed === servers.length) {
+            if (lastErr) reject(lastErr);
+            else resolve();
+          }
+        });
+      }
     })
   };
 }
@@ -4623,7 +4651,7 @@ Usage:
 
 Options:
   --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
-  --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --host <ips>        Host(s) to bind on, comma-separated (e.g. 127.0.0.1,::1) (default: 127.0.0.1, or LATCH_HOST)
   --token <secret>    Require Bearer token or ?token= query parameter (or LATCH_TOKEN)
   --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
@@ -4662,9 +4690,13 @@ if (command === "-h" || command === "--help") usage();
 if (command !== "start" && command !== "mcp") usage();
 var host = hostFromArgs(argv);
 var token = tokenFromArgs(argv);
-if (host !== "127.0.0.1" && host !== "localhost" && !token) {
+var hostsList = host.split(",").map((h) => h.trim()).filter(Boolean);
+var nonLoopback = hostsList.some(
+  (h) => h !== "127.0.0.1" && h !== "localhost" && h !== "::1"
+);
+if (nonLoopback && !token) {
   console.error(
-    `[latch] warning: binding ${host} with no auth. Pass --token <secret> or put this behind Caddy/nginx on loopback.`
+    `[latch] warning: binding non-loopback address (${host}) with no auth. Pass --token <secret> or put this behind Caddy/nginx.`
   );
 }
 var hub = new Hub();

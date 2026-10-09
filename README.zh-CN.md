@@ -208,9 +208,13 @@ curl -s http://127.0.0.1:12580/status
 
 如需将后台服务部署到远程服务器：
 
-1. 启动服务并限制监听在本地回环地址：
+1. 启动服务并指定监听地址（可配置 Token）：
    ```bash
-   pnpm --filter @latch/daemon start -- --host 127.0.0.1 --port 12580
+   # 单个地址（默认：127.0.0.1）
+   latch start --host 127.0.0.1 --port 12580
+
+   # 或同时精准监听多个指定的 IPv4 / IPv6 地址（以逗号分隔）：
+   latch start --host "127.0.0.1, ::1, 2409:xxxx:xxxx::1" --port 12580 --token <secret>
    ```
 2. 前端通过 Caddy 或 Nginx 配置反向代理与 TLS（443 端口），配置文件参考 `deploy/` 目录。
 3. 将本地浏览器扩展选项中的 WebSocket URL 修改为 `wss://<你的域名>/ws`。

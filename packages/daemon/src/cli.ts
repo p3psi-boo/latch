@@ -13,7 +13,7 @@ Usage:
 
 Options:
   --port <number>     Port to listen on (default: 12580, or LATCH_PORT)
-  --host <ip>         Host to bind on (default: 127.0.0.1, or LATCH_HOST)
+  --host <ips>        Host(s) to bind on, comma-separated (e.g. 127.0.0.1,::1) (default: 127.0.0.1, or LATCH_HOST)
   --token <secret>    Require Bearer token or ?token= query parameter (or LATCH_TOKEN)
   --browser <id>      (MCP only) Pin this MCP server session to a specific browser id
 
@@ -59,9 +59,13 @@ if (command !== "start" && command !== "mcp") usage();
 
 const host = hostFromArgs(argv);
 const token = tokenFromArgs(argv);
-if (host !== "127.0.0.1" && host !== "localhost" && !token) {
+const hostsList = host.split(",").map((h) => h.trim()).filter(Boolean);
+const nonLoopback = hostsList.some(
+  (h) => h !== "127.0.0.1" && h !== "localhost" && h !== "::1",
+);
+if (nonLoopback && !token) {
   console.error(
-    `[latch] warning: binding ${host} with no auth. Pass --token <secret> or put this behind Caddy/nginx on loopback.`,
+    `[latch] warning: binding non-loopback address (${host}) with no auth. Pass --token <secret> or put this behind Caddy/nginx.`,
   );
 }
 
