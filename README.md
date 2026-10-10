@@ -127,7 +127,7 @@ The background service exposes the following endpoints on `http://127.0.0.1:1258
 
 | Method | Endpoint | Request Body | Description |
 |---|---|---|---|
-| `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | Runs a JavaScript automation script in Node.js |
+| `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | Forwards a script to the plugin sandbox |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | Executes a single browser command directly |
 | `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint over HTTP POST (auto-resolves browser) |
 | `POST` | `/mcp/{browser_id}` | `{"jsonrpc": "2.0", "id": 1, ...}` | Remote MCP endpoint pinned directly to `{browser_id}` |
@@ -141,7 +141,7 @@ The background service exposes the following endpoints on `http://127.0.0.1:1258
 
 #### Example: Running an automation script (`POST /run`)
 
-The script runs in a secure Node.js sandbox providing a `page` helper object and a `cliLog` function:
+The script runs in an isolated plugin page with a separate Web Worker per invocation. The daemon only forwards requests; the plugin provides `page` and `cliLog`:
 
 ```bash
 curl -s -X POST http://127.0.0.1:12580/run \
@@ -155,8 +155,12 @@ curl -s -X POST http://127.0.0.1:12580/run \
 Available `page` helper methods:
 - Navigation & Tabs: `goto`, `findTab`, `listTabs`, `closeTab`, `closeSession`
 - Inspection: `snapshot` (accessibility tree), `screenshot`, `evaluate`
-- Interactions: `click`, `fill`, `type`, `scroll`, `drag`, `wait`
+- Interactions: `click`, `fill`, `selectOption`, `type`, `scroll`, `drag`, `wait`
 - Low-level: `cdp`
+
+For native dropdowns, use `await page.selectOption('select[name="my-select"]', {label:"Two"})`. Each match specifies exactly one of `value`, exact `label`, or zero-based `index`. An array replaces a multiple select's selection; `[]` clears it. The extension rejects missing, ambiguous, or disabled options, sets DOM selection, dispatches untrusted `input`/`change` events when the selection changes, and verifies the selected options after synchronous handlers. The result includes `verified`, `mode:"dom"`, `changed`, `values`, and `labels`; asynchronous page updates and form submission require separate checks. Custom dropdown widgets retain their own click or keyboard sequence. The single MCP tool `select_option` uses the same implementation with `selector` and `option` parameters.
+
+`click` rejects targets without a usable layout box. Its `success` and `dispatched` fields confirm mouse event dispatch, not the page's business outcome.
 
 #### Example: Running a single command (`POST /command`)
 
@@ -173,9 +177,19 @@ curl -s -X POST http://127.0.0.1:12580/command \
 ```
 
 Supported actions:
-`navigate`, `find_tab`, `list_tabs`, `close_tab`, `close_session`, `snapshot`, `click`, `fill`, `type`, `scroll`, `drag`, `wait`, `screenshot`, `evaluate`, `cdp`.
+`navigate`, `find_tab`, `list_tabs`, `close_tab`, `close_session`, `snapshot`, `click`, `fill`, `select_option`, `type`, `scroll`, `drag`, `wait`, `screenshot`, `evaluate`, `cdp`.
 
 ---
+
+## The plugin defines tools and the daemon relays requests.
+
+`packages/extension/src/tool-definitions.ts` and `tool-schemas.ts` own MCP names, descriptions, and input schemas; `tools.ts` owns browser actions. The plugin publishes its definitions on connection. The daemon answers `tools/list` from those definitions and forwards calls to the selected plugin. Reconnects and definition updates generate `notifications/tools/list_changed`; HTTP clients can receive notifications through a GET SSE stream on the MCP endpoint and must refresh their tool list.
+
+This migration uses wire protocol 2 and initially requires updating both packages. Run `pnpm build`, start the daemon with `node bin/latch.cjs start`, and load `packages/extension/dist` in Chrome with developer mode enabled. After replacing an unpacked plugin, click Reload on the extensions page. Set the plugin WebSocket URL to the daemon's `/ws` endpoint and connect MCP clients to `/mcp/<browser-id>`. Old-wire plugins are rejected. After this initial migration, browser tools can be added by upgrading only the plugin while the wire protocol remains compatible.
+
+Scripts can invoke newly added tools with `await page.call("tool_name", {arguments})`; existing helpers such as `page.selectOption(...)` remain. The daemon no longer executes source or stores tab ownership. Plugin sessions use `chrome.storage.session`, surviving service worker restarts and daemon reconnects but not plugin reloads or browser shutdown. Chrome 116+ and the `offscreen` permission are required. Each script worker and its sandbox iframe are removed on completion or at the existing script deadline.
+
+MCP screenshots return image content. HTTP commands and plugin scripts return `mimeType` and `base64` image bytes instead of host file paths; clients save the image. On an unpinned endpoint, same-name tools from different plugins must have identical definitions. Use `/mcp/<browser-id>` when definitions differ. An unpinned endpoint lists no tools without a connected plugin; a pinned endpoint reports a connection error.
 
 ## Working with Multiple Browsers
 

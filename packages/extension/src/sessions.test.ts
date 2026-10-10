@@ -26,3 +26,15 @@ test("close_session drops the record", () => {
   applyToolSideEffects(store, "s", "close_session", {}, { closed: 1 });
   assert.deepEqual(store.get("s").tabIds, []);
 });
+
+test("plugin session state restores current and borrowed tabs after worker restart", () => {
+  const first = new SessionStore();
+  first.bind("s", 1, true);
+  first.bind("s", 2, false);
+  const restored = new SessionStore();
+  restored.restore(JSON.parse(JSON.stringify(first.dump())));
+  assert.deepEqual(restored.get("s"), first.get("s"));
+  restored.forgetTab(2);
+  assert.equal(restored.get("s").currentTabId, 1);
+  assert.deepEqual(restored.get("s").ownedTabIds, [1]);
+});

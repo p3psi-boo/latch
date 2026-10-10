@@ -3,6 +3,9 @@ import {
   encodeWireMessage,
   parseWireMessage,
   type HelloPayload,
+  type ToolDefinition,
+  type BrowserInfo,
+  PROTOCOL_VERSION,
   type WireMessage,
 } from "@latch/protocol";
 import type { WebSocket } from "ws";
@@ -20,6 +23,8 @@ export class ExtensionBridge {
   private hello: HelloPayload | null = null;
   private readonly pending = new Map<string, Pending>();
   onHello?: (payload: HelloPayload) => void;
+  onToolsChanged?: () => void;
+  get tools(): readonly ToolDefinition[] { return this.hello?.tools ?? []; }
 
   get connected(): boolean {
     return this.socket !== null && this.socket.readyState === 1;
@@ -48,7 +53,7 @@ export class ExtensionBridge {
     }
   }
 
-  async call(name: string, args: Record<string, unknown>): Promise<unknown> {
+  async call(name: string, args: Record<string, unknown>, session = "", browsers?: BrowserInfo[], format?: "mcp"): Promise<unknown> {
     if (!this.connected || !this.socket) {
       throw new Error(
         "Latch extension is not connected. Load the unpacked extension and wait until the toolbar icon shows connected.",
@@ -58,7 +63,7 @@ export class ExtensionBridge {
     const message: WireMessage = {
       type: "tool_call",
       requestId,
-      payload: { name, args },
+      payload: { name, args, session, browsers, ...(format ? { format } : {}) },
     };
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -80,17 +85,27 @@ export class ExtensionBridge {
     }
     switch (message.type) {
       case "hello":
+        if (message.payload.protocolVersion !== PROTOCOL_VERSION || !validTools(message.payload.tools)) {
+          this.shutdown(4400, "Upgrade plugin and relay to wire protocol 2 with tool definitions");
+          return;
+        }
         this.hello = message.payload;
         this.socket?.send(
           encodeWireMessage({
             type: "hello_ack",
             payload: {
               daemonVersion: "0.1.0",
-              protocolVersion: message.payload.protocolVersion,
+              protocolVersion: PROTOCOL_VERSION,
             },
           }),
         );
         this.onHello?.(message.payload);
+        this.onToolsChanged?.();
+        return;
+      case "tools_changed":
+        if (!this.hello || !validTools(message.payload.tools)) return;
+        this.hello = { ...this.hello, tools: message.payload.tools };
+        this.onToolsChanged?.();
         return;
       case "ping":
         this.socket?.send(encodeWireMessage({ type: "pong" }));
@@ -114,10 +129,20 @@ export class ExtensionBridge {
   private drop(reason: string): void {
     this.socket = null;
     this.hello = null;
+    this.onToolsChanged?.();
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new Error(reason));
       this.pending.delete(id);
     }
   }
+}
+
+function validTools(raw: unknown): raw is ToolDefinition[] {
+  if (!Array.isArray(raw)) return false;
+  const names = new Set<string>();
+  return raw.every((tool) => {
+    if (!tool || typeof tool.name !== "string" || !tool.name || names.has(tool.name) || !tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema)) return false;
+    names.add(tool.name); return true;
+  });
 }

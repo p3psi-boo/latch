@@ -8,6 +8,13 @@ export type SessionState = {
 
 export class SessionStore {
   private readonly sessions = new Map<string, SessionState>();
+  dump(): SessionState[] { return [...this.sessions.values()]; }
+  restore(raw: unknown): void {
+    if (!Array.isArray(raw)) return;
+    for (const value of raw) {
+      if (value && typeof value.name === "string" && Array.isArray(value.tabIds) && Array.isArray(value.ownedTabIds)) this.sessions.set(value.name, value);
+    }
+  }
 
   get(name: string): SessionState {
     const existing = this.sessions.get(name);

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   encodeWireMessage,
-  isToolName,
   mintBrowserId,
   normalizeRemark,
   parseBrowserId,
@@ -10,19 +9,11 @@ import {
   PROTOCOL_VERSION,
 } from "./index.ts";
 
-test("isToolName accepts the v0 set and rejects unknown", () => {
-  assert.equal(isToolName("navigate"), true);
-  assert.equal(isToolName("snapshot"), true);
-  assert.equal(isToolName("scroll"), true);
-  assert.equal(isToolName("drag"), true);
-  assert.equal(isToolName("type"), true);
-  assert.equal(isToolName("rm -rf"), false);
-});
-
 test("wire hello round-trips with browser id and remark", () => {
   const raw = encodeWireMessage({
     type: "hello",
     payload: {
+      tools: [{ name: "extension_added_tool", inputSchema: { type: "object" } }],
       extensionVersion: "0.1.0",
       protocolVersion: PROTOCOL_VERSION,
       browserId: "work",

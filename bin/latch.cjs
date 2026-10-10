@@ -3710,29 +3710,9 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/protocol/src/index.ts
-var PROTOCOL_VERSION = 1;
+var PROTOCOL_VERSION = 2;
 var DEFAULT_PORT = 12580;
 var DEFAULT_HOST = "127.0.0.1";
-var TOOL_NAMES = [
-  "navigate",
-  "find_tab",
-  "snapshot",
-  "click",
-  "fill",
-  "scroll",
-  "drag",
-  "type",
-  "evaluate",
-  "cdp",
-  "screenshot",
-  "list_tabs",
-  "close_tab",
-  "close_session",
-  "wait"
-];
-function isToolName(value) {
-  return TOOL_NAMES.includes(value);
-}
 var BROWSER_ID_MAX = 64;
 var BROWSER_REMARK_MAX = 200;
 function parseBrowserId(raw) {
@@ -3788,403 +3768,74 @@ var import_subprotocol = __toESM(require_subprotocol(), 1);
 var import_websocket = __toESM(require_websocket(), 1);
 var import_websocket_server = __toESM(require_websocket_server(), 1);
 
-// packages/daemon/src/screenshots.ts
-var import_promises = require("node:fs/promises");
-var import_node_os = require("node:os");
-var import_node_path = require("node:path");
-async function persistScreenshot(data) {
-  if (!data || typeof data !== "object") return data;
-  const shot = data;
-  if (typeof shot.base64 !== "string" || shot.base64.length === 0) return data;
-  const format = shot.format === "jpeg" ? "jpeg" : "png";
-  const mimeType = shot.mimeType ?? (format === "jpeg" ? "image/jpeg" : "image/png");
-  const target = typeof shot.path === "string" && shot.path.trim() ? shot.path : (0, import_node_path.join)((0, import_node_os.tmpdir)(), "latch-screenshots", `shot-${Date.now()}.${format === "jpeg" ? "jpg" : "png"}`);
-  const absolute = (0, import_node_path.isAbsolute)(target) ? target : (0, import_node_path.join)(process.cwd(), target);
-  await (0, import_promises.mkdir)((0, import_node_path.dirname)(absolute), { recursive: true });
-  await (0, import_promises.writeFile)(absolute, Buffer.from(shot.base64, "base64"));
-  return {
-    format,
-    mimeType,
-    path: absolute,
-    sizeBytes: Buffer.byteLength(shot.base64, "base64")
-  };
-}
-
-// packages/daemon/src/sessions.ts
-var SessionStore = class {
-  sessions = /* @__PURE__ */ new Map();
-  get(name) {
-    const existing = this.sessions.get(name);
-    if (existing) return existing;
-    const created = {
-      name,
-      tabIds: [],
-      ownedTabIds: []
-    };
-    this.sessions.set(name, created);
-    return created;
-  }
-  noteTitle(name, title) {
-    if (!title?.trim()) return;
-    this.get(name).groupTitle = title.trim();
-  }
-  bind(name, tabId, owned) {
-    const session = this.get(name);
-    if (!session.tabIds.includes(tabId)) session.tabIds.push(tabId);
-    if (owned && !session.ownedTabIds.includes(tabId)) session.ownedTabIds.push(tabId);
-    session.currentTabId = tabId;
-    return session;
-  }
-  forgetTab(tabId) {
-    for (const session of this.sessions.values()) {
-      session.tabIds = session.tabIds.filter((id) => id !== tabId);
-      session.ownedTabIds = session.ownedTabIds.filter((id) => id !== tabId);
-      if (session.currentTabId === tabId) session.currentTabId = session.tabIds.at(-1);
-    }
-  }
-  close(name) {
-    const session = this.sessions.get(name);
-    if (!session) return [];
-    const owned = [...session.ownedTabIds];
-    this.sessions.delete(name);
-    return owned;
-  }
-  inject(name, args) {
-    const session = this.get(name);
-    return {
-      ...args,
-      _session: name,
-      _tabId: session.currentTabId,
-      _tabIds: [...session.tabIds],
-      _ownedTabIds: [...session.ownedTabIds]
-    };
-  }
-};
-function applyToolSideEffects(store, session, action, args, data) {
-  if (action === "close_session") {
-    store.close(session);
-    return;
-  }
-  if (data && typeof data === "object" && "tabId" in data && typeof data.tabId === "number") {
-    const borrowed = "borrowed" in data && data.borrowed === true;
-    store.bind(session, data.tabId, !borrowed);
-  }
-  if (action === "navigate" && typeof args.group_title === "string") {
-    store.noteTitle(session, args.group_title);
-  }
-}
-
 // packages/daemon/src/dispatch.ts
-async function dispatchCommand(bridge, store, action, args, session) {
-  if (!session.trim()) throw new Error("session is required");
-  if (!isToolName(action)) throw new Error(`unknown action: ${action}`);
-  if (typeof args.group_title === "string") store.noteTitle(session, args.group_title);
-  const injected = store.inject(session, args);
-  const data = await bridge.call(action, injected);
-  const normalized = action === "screenshot" ? await persistScreenshot(data) : data;
-  applyToolSideEffects(store, session, action, args, normalized);
-  return normalized;
-}
-
-// packages/daemon/src/run.ts
-var import_node_vm = __toESM(require("node:vm"), 1);
-var DEFAULT_RUN_TIMEOUT_MS = 6e4;
-var MAX_RUN_TIMEOUT_MS = 5 * 60 * 1e3;
-function parseTimeoutMs(raw) {
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return DEFAULT_RUN_TIMEOUT_MS;
-  return Math.max(1, Math.min(MAX_RUN_TIMEOUT_MS, Math.floor(raw)));
-}
-function cloneValue(value) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return String(value);
-  }
-}
-function extraArgs(value) {
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return { ...value };
-  }
-  return {};
-}
-function bindPage(dispatch) {
-  const call = (action, args = {}) => dispatch(action, args);
-  return {
-    snapshot: (opts) => call("snapshot", extraArgs(opts)),
-    click: (selector, opts) => call("click", { ...extraArgs(opts), selector }),
-    fill: (selector, value, opts) => call("fill", { ...extraArgs(opts), selector, value }),
-    scroll: (opts) => call("scroll", extraArgs(opts)),
-    drag: (from, to, opts) => call("drag", { ...extraArgs(opts), from, to }),
-    type: (text, opts) => call("type", { ...extraArgs(opts), text }),
-    wait: (opts) => call("wait", extraArgs(opts)),
-    goto: (url, opts) => call("navigate", { ...extraArgs(opts), url }),
-    screenshot: (opts) => call("screenshot", extraArgs(opts)),
-    evaluate: (code, opts) => call("evaluate", { ...extraArgs(opts), code }),
-    cdp: (method, params) => call("cdp", { method, params }),
-    findTab: (opts) => call("find_tab", extraArgs(opts)),
-    listTabs: (opts) => call("list_tabs", extraArgs(opts)),
-    closeTab: (opts) => call("close_tab", extraArgs(opts)),
-    closeSession: (opts) => call("close_session", extraArgs(opts))
-  };
-}
-async function executeRun(input) {
-  const source = input.source;
-  if (typeof source !== "string" || !source.trim()) {
-    return { ok: false, logs: [], error: "source is required" };
-  }
-  const logs = [];
-  let step;
-  const dispatch = async (action, args) => {
-    step = action;
-    return input.dispatch(action, args);
-  };
-  const page = bindPage(dispatch);
-  const cliLog = (...args) => {
-    logs.push(args.length <= 1 ? cloneValue(args[0]) : args.map(cloneValue));
-  };
-  const sandbox = {
-    page,
-    task: { page: (_label) => page },
-    cliLog,
-    console: { log: cliLog, info: cliLog, warn: cliLog, error: cliLog },
-    JSON,
-    Math,
-    Date,
-    Number,
-    String,
-    Boolean,
-    Array,
-    Object,
-    Promise,
-    Map,
-    Set,
-    Error,
-    TypeError,
-    parseInt,
-    parseFloat,
-    isNaN,
-    isFinite,
-    undefined: void 0
-  };
-  Object.freeze(page);
-  Object.freeze(sandbox.task);
-  Object.freeze(sandbox.console);
-  const context = import_node_vm.default.createContext(sandbox, {
-    name: "latch-run",
-    codeGeneration: { strings: false, wasm: false }
-  });
-  const wrapped = `"use strict";
-(async () => {
-${source}
-})()`;
-  const timeoutMs = parseTimeoutMs(input.timeoutMs);
-  try {
-    const script = new import_node_vm.default.Script(wrapped, { filename: "latch-run.js" });
-    const pending = script.runInContext(context, {
-      timeout: timeoutMs,
-      importModuleDynamically: async () => {
-        throw new Error("import is not allowed in latch run");
-      }
-    });
-    let timer;
-    try {
-      const result = await Promise.race([
-        Promise.resolve(pending),
-        new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`run timed out after ${timeoutMs}ms`)), timeoutMs);
-        })
-      ]);
-      return { ok: true, logs, result: cloneValue(result) ?? null };
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return step ? { ok: false, logs, error: message, step } : { ok: false, logs, error: message };
-  }
-}
-function bindHubDispatch(hub2, session, browser) {
-  return async (action, args) => {
-    const slot = hub2.resolve(browser);
-    return dispatchCommand(slot.bridge, slot.store, action, args, session);
-  };
+async function dispatchCommand(bridge, action, args, session, browsers) {
+  return bridge.call(action, args, session, browsers);
 }
 
 // packages/daemon/src/mcp.ts
 var import_node_readline = require("node:readline");
-var TOOL_DESCRIPTIONS = {
-  navigate: "Open a URL in the current Latch session tab, or a new tab.",
-  find_tab: "Select a tab this session opened, or borrow the user's active tab (active:true).",
-  snapshot: "Accessibility tree of the current tab, with @e refs for click/fill.",
-  click: "Move the real mouse along a timed path, then click. Sites see mousemove.",
-  fill: "Click, then Input.insertText the whole string (DOM value fallback if verify fails).",
-  scroll: "Wheel the page (deltaX/deltaY, smoothstep steps) or scroll a selector into view.",
-  drag: "Drag from one selector to another. Real mouse path with the button held.",
-  type: "Type text with keyDown/keyUp per character. Optional selector focuses first; delayMs is optional.",
-  evaluate: "Run JavaScript in the page (async/await allowed).",
-  cdp: "Raw Chrome DevTools Protocol method on the current tab.",
-  screenshot: "Capture the viewport or an element. Returns a file path.",
-  list_tabs: "List tabs owned or borrowed by this session.",
-  close_tab: "Close the current tab in this session.",
-  close_session: "Close every tab this session opened.",
-  wait: "Wait until text or a selector appears (or until timeoutMs)."
-};
-var BROWSER_PROP = {
-  type: "string",
-  description: "User-defined browser id from the extension options. Required when more than one Chrome is connected. Omit when only one is connected."
-};
-function toolList(fixedBrowserId) {
-  const chromeTools = TOOL_NAMES.map((name) => ({
-    name,
-    description: TOOL_DESCRIPTIONS[name],
-    inputSchema: {
-      type: "object",
-      properties: {
-        session: {
-          type: "string",
-          description: "Task id. One task = one session = one tab group. Required."
-        },
-        ...fixedBrowserId ? {} : { browser: BROWSER_PROP }
-      },
-      additionalProperties: true,
-      required: ["session"]
-    }
-  }));
-  return [
-    {
-      name: "run",
-      description: "Default browser workflow. Run a JavaScript source string with injected page/cliLog/task helpers. Snapshot, click/fill with @e refs, wait, snapshot again. One session per script.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          source: {
-            type: "string",
-            description: 'JavaScript body. Top-level await ok. Helpers: page.snapshot(), page.click("@e1"), page.fill(sel, value), page.scroll({deltaY}), page.drag(from, to), page.type(text, {selector?}), page.wait({text|selector}), page.goto(url), cliLog(...), task.page("p1").'
-          },
-          session: {
-            type: "string",
-            description: "Task id. One task = one session = one tab group. Required."
-          },
-          ...fixedBrowserId ? {} : { browser: BROWSER_PROP },
-          timeoutMs: { type: "number", description: "Abort the script after this many ms. Default 60000." }
-        },
-        required: ["source", "session"]
-      }
-    },
-    {
-      name: "list_browsers",
-      description: fixedBrowserId ? `Pinned to browser "${fixedBrowserId}". List Latch browsers connected to this daemon.` : "List Latch browsers connected to this daemon (id, remark, connected). Use the id as the browser argument on other tools.",
-      inputSchema: { type: "object", properties: {} }
-    },
-    ...chromeTools
-  ];
-}
-function reply(id, result) {
-  if (id === void 0 || id === null) return;
-  const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
-  process.stdout.write(payload + "\n");
-}
-function replyError(id, message, code = -32e3) {
-  if (id === void 0 || id === null) return;
-  const payload = JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    error: { code, message }
-  });
-  process.stdout.write(payload + "\n");
+function toolList(hub2, browser) {
+  if (browser) return hub2.resolve(browser).bridge.tools;
+  const tools = /* @__PURE__ */ new Map();
+  for (const slot of hub2.connectedSlots()) for (const tool of slot.bridge.tools) {
+    const previous = tools.get(tool.name);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(tool)) throw new Error(`Tool definitions differ for ${tool.name}; use /mcp/<browser-id>`);
+    tools.set(tool.name, tool);
+  }
+  return [...tools.values()];
 }
 async function handleMcpMessage(msg, hub2, fixedBrowserId) {
   const method = msg.method ?? "";
-  if (method === "initialize") {
-    return {
-      result: {
-        protocolVersion: "2024-11-05",
-        capabilities: { tools: {} },
-        serverInfo: { name: "latch", version: "0.1.0" }
-      }
-    };
-  }
-  if (method === "notifications/initialized" || method === "notifications/cancelled") {
-    return null;
-  }
-  if (method === "tools/list") {
-    return { result: { tools: toolList(fixedBrowserId) } };
-  }
-  if (method === "ping") {
-    return { result: {} };
-  }
+  if (method === "initialize") return { result: { protocolVersion: "2024-11-05", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "latch", version: "0.1.0" } } };
+  if (method.startsWith("notifications/")) return null;
+  if (method === "tools/list") return { result: { tools: toolList(hub2, fixedBrowserId) } };
+  if (method === "ping") return { result: {} };
   if (method === "tools/call") {
     const params = msg.params ?? {};
     const name = String(params.name ?? "");
-    const rawArgs = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments : {};
-    if (name === "list_browsers") {
-      return {
-        result: {
-          content: [{ type: "text", text: JSON.stringify(hub2.list()) }]
-        }
-      };
-    }
-    if (name === "run") {
-      const session2 = typeof rawArgs.session === "string" ? rawArgs.session : "";
-      const source = typeof rawArgs.source === "string" ? rawArgs.source : "";
-      const browser2 = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
-      if (!session2.trim()) throw new Error("session is required");
-      const outcome = await executeRun({
-        source,
-        timeoutMs: parseTimeoutMs(rawArgs.timeoutMs),
-        dispatch: bindHubDispatch(hub2, session2, browser2)
-      });
-      return {
-        result: {
-          content: [{ type: "text", text: JSON.stringify(outcome) }],
-          ...outcome.ok ? {} : { isError: true }
-        }
-      };
-    }
-    const session = typeof rawArgs.session === "string" ? rawArgs.session : "";
-    const browser = fixedBrowserId ?? (typeof rawArgs.browser === "string" ? rawArgs.browser : void 0);
-    const { session: _ignored, browser: _browser, ...args } = rawArgs;
+    const raw = params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments) ? params.arguments : {};
+    const browser = fixedBrowserId ?? (typeof raw.browser === "string" ? raw.browser : void 0);
     const slot = hub2.resolve(browser);
-    const data = await dispatchCommand(slot.bridge, slot.store, name, args, session);
-    return {
-      result: {
-        content: [{ type: "text", text: JSON.stringify(data) }]
-      }
-    };
+    if (!slot.bridge.tools.some((tool) => tool.name === name)) return { error: { code: -32602, message: `Tool not advertised by browser ${slot.id}: ${name}` } };
+    const { session, browser: _browser, ...args } = raw;
+    try {
+      const result = await slot.bridge.call(name, args, typeof session === "string" ? session : "", hub2.list(), "mcp");
+      return { result };
+    } catch (error) {
+      return { result: { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true } };
+    }
   }
   return { error: { code: -32601, message: `Method not found: ${method}` } };
 }
-function startMcp(hub2, fixedBrowserId) {
-  const rl = (0, import_node_readline.createInterface)({ input: process.stdin });
-  rl.on("line", (line) => {
-    if (!line.trim()) return;
-    void handleLine(line, hub2, fixedBrowserId);
+function startMcp(hub2, fixedBrowserId, io = { input: process.stdin, output: process.stdout }) {
+  let initialized = false;
+  const rl = (0, import_node_readline.createInterface)({ input: io.input });
+  const unsubscribe = hub2.subscribe(() => {
+    if (initialized) io.output.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }) + "\n");
   });
-  console.error(
-    fixedBrowserId ? `[latch] MCP stdio listening (pinned to browser "${fixedBrowserId}")` : "[latch] MCP stdio listening"
-  );
-}
-async function handleLine(line, hub2, fixedBrowserId) {
-  let msg;
-  try {
-    msg = JSON.parse(line);
-  } catch {
-    return;
-  }
-  try {
-    const response = await handleMcpMessage(msg, hub2, fixedBrowserId);
-    if (!response) return;
-    if (response.error) {
-      replyError(msg.id, response.error.message, response.error.code);
-    } else {
-      reply(msg.id, response.result);
+  rl.on("close", unsubscribe);
+  rl.on("line", (line) => {
+    if (line.trim()) void handleLine(line);
+  });
+  async function handleLine(line) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      return;
     }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    reply(msg.id, {
-      content: [{ type: "text", text: message }],
-      isError: true
-    });
+    if (msg.method === "notifications/initialized") initialized = true;
+    if (msg.id == null) {
+      await handleMcpMessage(msg, hub2, fixedBrowserId).catch(() => null);
+      return;
+    }
+    try {
+      const response = await handleMcpMessage(msg, hub2, fixedBrowserId);
+      if (response) io.output.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, ...response }) + "\n");
+    } catch (error) {
+      io.output.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, error: { code: -32e3, message: String(error) } }) + "\n");
+    }
   }
 }
 
@@ -4334,10 +3985,10 @@ async function handle(req, res, hub2, port, token2) {
         const slot = hub2.resolve(targetBrowser);
         const data = await dispatchCommand(
           slot.bridge,
-          slot.store,
           command2.action,
           command2.args ?? {},
-          command2.session
+          command2.session,
+          hub2.list()
         );
         sendJson(res, 200, { ok: true, data });
       } catch (error) {
@@ -4350,11 +4001,8 @@ async function handle(req, res, hub2, port, token2) {
       const body = await readBody(req);
       const request = parseRun(body);
       const targetBrowser = request.browser ?? (url.searchParams.get("browser") || void 0);
-      const outcome = await executeRun({
-        source: request.source,
-        timeoutMs: request.timeoutMs,
-        dispatch: bindHubDispatch(hub2, request.session, targetBrowser)
-      });
+      const slot = hub2.resolve(targetBrowser);
+      const outcome = await dispatchCommand(slot.bridge, "run", { source: request.source, timeoutMs: request.timeoutMs }, request.session, hub2.list());
       sendJson(res, 200, outcome);
       return;
     }
@@ -4363,10 +4011,20 @@ async function handle(req, res, hub2, port, token2) {
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization"
         });
         res.end();
+        return;
+      }
+      if (req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+        res.flushHeaders();
+        const unsubscribe = hub2.subscribe(() => res.write(`event: message
+data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })}
+
+`));
+        res.on("close", unsubscribe);
         return;
       }
       if (req.method === "POST") {
@@ -4437,7 +4095,7 @@ function parseRun(raw) {
     source: value.source,
     session: value.session,
     browser,
-    timeoutMs: parseTimeoutMs(value.timeoutMs)
+    timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : void 0
   };
 }
 function uniqueVersion(browsers) {
@@ -4453,6 +4111,10 @@ var ExtensionBridge = class {
   hello = null;
   pending = /* @__PURE__ */ new Map();
   onHello;
+  onToolsChanged;
+  get tools() {
+    return this.hello?.tools ?? [];
+  }
   get connected() {
     return this.socket !== null && this.socket.readyState === 1;
   }
@@ -4475,7 +4137,7 @@ var ExtensionBridge = class {
       }
     }
   }
-  async call(name, args) {
+  async call(name, args, session = "", browsers, format) {
     if (!this.connected || !this.socket) {
       throw new Error(
         "Latch extension is not connected. Load the unpacked extension and wait until the toolbar icon shows connected."
@@ -4485,7 +4147,7 @@ var ExtensionBridge = class {
     const message = {
       type: "tool_call",
       requestId,
-      payload: { name, args }
+      payload: { name, args, session, browsers, ...format ? { format } : {} }
     };
     return await new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -4506,17 +4168,27 @@ var ExtensionBridge = class {
     }
     switch (message.type) {
       case "hello":
+        if (message.payload.protocolVersion !== PROTOCOL_VERSION || !validTools(message.payload.tools)) {
+          this.shutdown(4400, "Upgrade plugin and relay to wire protocol 2 with tool definitions");
+          return;
+        }
         this.hello = message.payload;
         this.socket?.send(
           encodeWireMessage({
             type: "hello_ack",
             payload: {
               daemonVersion: "0.1.0",
-              protocolVersion: message.payload.protocolVersion
+              protocolVersion: PROTOCOL_VERSION
             }
           })
         );
         this.onHello?.(message.payload);
+        this.onToolsChanged?.();
+        return;
+      case "tools_changed":
+        if (!this.hello || !validTools(message.payload.tools)) return;
+        this.hello = { ...this.hello, tools: message.payload.tools };
+        this.onToolsChanged?.();
         return;
       case "ping":
         this.socket?.send(encodeWireMessage({ type: "pong" }));
@@ -4539,6 +4211,7 @@ var ExtensionBridge = class {
   drop(reason) {
     this.socket = null;
     this.hello = null;
+    this.onToolsChanged?.();
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(new Error(reason));
@@ -4546,11 +4219,30 @@ var ExtensionBridge = class {
     }
   }
 };
+function validTools(raw) {
+  if (!Array.isArray(raw)) return false;
+  const names = /* @__PURE__ */ new Set();
+  return raw.every((tool) => {
+    if (!tool || typeof tool.name !== "string" || !tool.name || names.has(tool.name) || !tool.inputSchema || typeof tool.inputSchema !== "object" || Array.isArray(tool.inputSchema)) return false;
+    names.add(tool.name);
+    return true;
+  });
+}
 
 // packages/daemon/src/hub.ts
 var HELLO_TIMEOUT_MS = 1e4;
 var Hub = class {
   browsers = /* @__PURE__ */ new Map();
+  subscribers = /* @__PURE__ */ new Set();
+  subscribe(callback) {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+  connectedSlots() {
+    return [...this.browsers.values()].filter((slot) => slot.bridge.connected);
+  }
   accept(socket) {
     const incoming = new ExtensionBridge();
     const timer = setTimeout(() => {
@@ -4566,12 +4258,15 @@ var Hub = class {
         incoming.shutdown(CLOSE_CODES.badHello, message.slice(0, 120));
       }
     };
+    incoming.onToolsChanged = () => {
+      for (const callback of this.subscribers) callback();
+    };
     incoming.attach(socket);
   }
   claim(id, remark, incoming) {
     let slot = this.browsers.get(id);
     if (!slot) {
-      slot = { id, remark, bridge: incoming, store: new SessionStore() };
+      slot = { id, remark, bridge: incoming };
       this.browsers.set(id, slot);
       return slot;
     }

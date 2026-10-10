@@ -14,7 +14,7 @@ Local default: `http://127.0.0.1:12580`. The default workflow is **one `run` scr
 
 ## Default: `run`
 
-POST `/run` or MCP tool `run` with `source` + `session`. The daemon executes the source in a sandbox with `page`, `task.page()`, and `cliLog`. Helpers call the existing tools; they do not run inside the page.
+POST `/run` or MCP tool `run` with `source` + `session`. The daemon forwards the source to the plugin sandbox, which provides `page`, `task.page()`, and `cliLog`. Helpers call the existing tools; they do not run inside the page.
 
 ```bash
 curl -s -X POST http://127.0.0.1:12580/run \
@@ -35,7 +35,9 @@ await page.wait({ text: "欢迎" });
 cliLog(await page.snapshot());
 ```
 
-Helpers: `page.goto` `snapshot` `click` `fill` `scroll` `drag` `type` `wait` `screenshot` `evaluate` `cdp` `findTab` `listTabs` `closeTab` `closeSession`. Click flies the real mouse then press/release (`@e` ref or CSS). `page.scroll({ deltaY })` wheels; `page.scroll({ selector })` brings an element into view. `page.drag(from, to)` holds the button during the second flight. `page.fill` uses `Input.insertText`; `page.type(text, { selector?, delayMs? })` sends keyDown/keyUp. `cliLog` is the output the model should read. A helper error stops the rest of the script; the response includes `logs`, `error`, and `step`.
+Use `page.call("tool_name", {arguments})` for newly added tools. Read the connected plugin’s MCP tool list for its current parameters. Helpers: `page.goto` `snapshot` `click` `fill` `selectOption` `scroll` `drag` `type` `wait` `screenshot` `evaluate` `cdp` `findTab` `listTabs` `closeTab` `closeSession`. Click flies the real mouse then press/release (`@e` ref or CSS). Its `success` and `dispatched` fields confirm dispatch, not the page's business outcome; a target with no usable layout box produces an error. `page.scroll({ deltaY })` wheels; `page.scroll({ selector })` brings an element into view. `page.drag(from, to)` holds the button during the second flight. `page.fill` uses `Input.insertText`; `page.type(text, { selector?, delayMs? })` sends keyDown/keyUp. `cliLog` is the output the model should read. A helper error stops the rest of the script; the response includes `logs`, `error`, and `step`.
+
+`page.selectOption(selector, {value:"2"})` targets a native `SELECT`, not its `OPTION`. Each match specifies exactly one of `value`, exact `label`, or zero-based `index`. For a multiple select, pass an array of matches to replace the selection, or `[]` to clear it. Disabled or ambiguous options produce an error before selection changes. The extension changes DOM selection and dispatches untrusted `input` and `change` events only when selection changes. It checks the selection after synchronous event handlers and returns `verified`, `mode:"dom"`, `changed`, `values`, and `labels`. This does not verify later asynchronous updates or form submission. Custom dropdown widgets use their own click or keyboard interaction sequence.
 
 If several browsers are connected, add `"browser":"<id>"` next to `session`.
 
@@ -52,12 +54,13 @@ Self-hosted daemon: same body against `https://your.domain/run`. No pairing code
 | `snapshot` | — | Accessibility tree with `@e` refs |
 | `click` | `selector` | Real mouse path, then 25ms press/release |
 | `fill` | `selector`, `value` | `Input.insertText`, DOM fallback |
+| `select_option` | `selector`, `option` | Native SELECT; same implementation as `page.selectOption` |
 | `scroll` | `deltaX?`, `deltaY?`, `selector?` | Wheel, or into-view when only `selector` |
 | `drag` | `from`, `to` | Pressed flight between two selectors |
 | `type` | `text`, `selector?`, `delayMs?` | Per-character keyDown/keyUp |
 | `evaluate` | `code` | Page JS. Compact `JSON.stringify` |
 | `cdp` | `method`, `params?` | Do not call `Target.activateTarget` |
-| `screenshot` | `format?`, `quality?`, `selector?`, `path?` | Returns a file `path` |
+| `screenshot` | `format?`, `quality?`, `selector?` | MCP returns image content; HTTP/run returns `mimeType` and `base64`. The client saves the image |
 | `wait` | `text?`, `selector?`, `timeoutMs?` | |
 | `list_tabs` | — | |
 | `close_tab` | — | Current tab |

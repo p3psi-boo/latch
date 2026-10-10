@@ -9,7 +9,6 @@ import { WebSocketServer } from "ws";
 import { dispatchCommand } from "./dispatch.ts";
 import type { Hub } from "./hub.ts";
 import { handleMcpMessage } from "./mcp.ts";
-import { bindHubDispatch, executeRun, parseTimeoutMs } from "./run.ts";
 
 const MAX_BODY = 12 * 1024 * 1024;
 const DAEMON_VERSION = "0.1.0";
@@ -196,10 +195,10 @@ async function handle(
         const slot = hub.resolve(targetBrowser);
         const data = await dispatchCommand(
           slot.bridge,
-          slot.store,
           command.action,
           command.args ?? {},
           command.session,
+          hub.list(),
         );
         sendJson(res, 200, { ok: true, data });
       } catch (error) {
@@ -212,11 +211,8 @@ async function handle(
       const body = await readBody(req);
       const request = parseRun(body);
       const targetBrowser = request.browser ?? (url.searchParams.get("browser") || undefined);
-      const outcome = await executeRun({
-        source: request.source,
-        timeoutMs: request.timeoutMs,
-        dispatch: bindHubDispatch(hub, request.session, targetBrowser),
-      });
+      const slot = hub.resolve(targetBrowser);
+      const outcome = await dispatchCommand(slot.bridge, "run", { source: request.source, timeoutMs: request.timeoutMs }, request.session, hub.list());
       sendJson(res, 200, outcome);
       return;
     }
@@ -227,10 +223,17 @@ async function handle(
       if (req.method === "OPTIONS") {
         res.writeHead(204, {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
         });
         res.end();
+        return;
+      }
+      if (req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+        res.flushHeaders();
+        const unsubscribe = hub.subscribe(() => res.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })}\n\n`));
+        res.on("close", unsubscribe);
         return;
       }
       if (req.method === "POST") {
@@ -293,7 +296,7 @@ async function handle(
   }
 }
 
-function parseRun(raw: string): { source: string; session: string; browser?: string; timeoutMs: number } {
+function parseRun(raw: string): { source: string; session: string; browser?: string; timeoutMs?: number } {
   const value = JSON.parse(raw) as Record<string, unknown>;
   if (!value || typeof value !== "object") throw new Error("body must be a JSON object");
   if (typeof value.source !== "string" || !value.source.trim()) throw new Error("source is required");
@@ -303,7 +306,7 @@ function parseRun(raw: string): { source: string; session: string; browser?: str
     source: value.source,
     session: value.session,
     browser,
-    timeoutMs: parseTimeoutMs(value.timeoutMs),
+    timeoutMs: typeof value.timeoutMs === "number" ? value.timeoutMs : undefined,
   };
 }
 

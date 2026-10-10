@@ -34,6 +34,10 @@ await esbuild.build({
   legalComments: "none",
 });
 
+for (const name of ["offscreen", "run-sandbox"]) {
+  await esbuild.build({ absWorkingDir: root, entryPoints: [join(src, `${name}.ts`)], outfile: join(dist, `${name}.js`), bundle: true, format: "iife", platform: "browser", target: "es2022", sourcemap: true, legalComments: "none" });
+  cpSync(join(src, `${name}.html`), join(dist, `${name}.html`));
+}
 cpSync(join(src, "options.html"), join(dist, "options.html"));
 cpSync(join(src, "options.css"), join(dist, "options.css"));
 cpSync(join(root, "manifest.json"), join(dist, "manifest.json"));

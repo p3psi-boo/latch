@@ -15,15 +15,14 @@ class ClosedBridge extends ExtensionBridge {
   }
 }
 
-test("claim same id keeps the session store and replaces the bridge", () => {
+test("claim same id replaces the bridge without keeping browser session state in daemon", () => {
   const hub = new Hub();
-  const first = hub.claim("work", "office", new OpenBridge());
-  const store = first.store;
-  store.bind("task", 42, true);
-  const second = hub.claim("work", "laptop", new OpenBridge());
-  assert.equal(second.store, store);
-  assert.equal(second.store.get("task").currentTabId, 42);
+  hub.claim("work", "office", new OpenBridge());
+  const incoming = new OpenBridge();
+  const second = hub.claim("work", "laptop", incoming);
+  assert.equal(second.bridge, incoming);
   assert.equal(second.remark, "laptop");
+  assert.equal("store" in second, false);
   assert.equal(hub.size(), 1);
 });
 

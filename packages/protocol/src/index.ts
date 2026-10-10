@@ -1,32 +1,27 @@
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const DEFAULT_PORT = 12580;
 export const DEFAULT_HOST = "127.0.0.1";
 
-export const TOOL_NAMES = [
-  "navigate",
-  "find_tab",
-  "snapshot",
-  "click",
-  "fill",
-  "scroll",
-  "drag",
-  "type",
-  "evaluate",
-  "cdp",
-  "screenshot",
-  "list_tabs",
-  "close_tab",
-  "close_session",
-  "wait",
-] as const;
+export type ToolDefinition = {
+  name: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  [field: string]: unknown;
+};
+export type ToolName = string;
 
-export type ToolName = (typeof TOOL_NAMES)[number];
+/** Exactly one field identifies an option in a native SELECT. */
+export type SelectOptionMatch =
+  | { value: string; label?: never; index?: never }
+  | { label: string; value?: never; index?: never }
+  | { index: number; value?: never; label?: never };
 
-export function isToolName(value: string): value is ToolName {
-  return (TOOL_NAMES as readonly string[]).includes(value);
-}
+export type SelectOptionArgs = {
+  selector: string;
+  option: SelectOptionMatch | SelectOptionMatch[];
+};
 
-/** Agent-facing request. Internal _ fields are injected by the daemon. */
+/** Agent-facing request. Internal _ fields are injected by the plugin. */
 export type CommandRequest = {
   action: ToolName;
   args?: Record<string, unknown>;
@@ -123,6 +118,7 @@ export function normalizeRemark(raw: unknown): string | undefined {
 }
 
 export type HelloPayload = {
+  tools: ToolDefinition[];
   extensionVersion: string;
   protocolVersion: number;
   /** User-defined. The extension mints a UUID v4 when the field is left blank. */
@@ -138,6 +134,9 @@ export type HelloAckPayload = {
 export type ToolCallPayload = {
   name: string;
   args: Record<string, unknown>;
+  session: string;
+  format?: "mcp";
+  browsers?: BrowserInfo[];
 };
 
 export type ToolResultPayload =
@@ -147,6 +146,7 @@ export type ToolResultPayload =
 export type WireMessage =
   | { type: "hello"; payload: HelloPayload }
   | { type: "hello_ack"; payload: HelloAckPayload }
+  | { type: "tools_changed"; payload: { tools: ToolDefinition[] } }
   | { type: "ping" }
   | { type: "pong" }
   | { type: "tool_call"; requestId: string; payload: ToolCallPayload }
@@ -166,7 +166,7 @@ export function encodeWireMessage(message: WireMessage): string {
   return JSON.stringify(message);
 }
 
-/** Fields the daemon injects before forwarding to the extension. */
+/** Fields the plugin injects before executing a browser operation. */
 export type InternalToolArgs = {
   _tabId?: number;
   _session?: string;

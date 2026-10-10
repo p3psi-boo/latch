@@ -8,7 +8,9 @@ import {
   parseWireMessage,
   type WireMessage,
 } from "@latch/protocol";
-import { executeTool } from "./tools.ts";
+import { executeCommand } from "./executor.ts";
+import { TOOL_DEFINITIONS } from "./tool-definitions.ts";
+import { toolSuccess, toolFailure } from "./mcp-result.ts";
 
 const URL_KEY = "latch_ws_url";
 const ID_KEY = "latch_browser_id";
@@ -120,6 +122,7 @@ export class DaemonSocket {
       this.send({
         type: "hello",
         payload: {
+          tools: TOOL_DEFINITIONS,
           extensionVersion: chrome.runtime.getManifest().version,
           protocolVersion: PROTOCOL_VERSION,
           browserId: this.identity.browserId,
@@ -157,19 +160,19 @@ export class DaemonSocket {
       case "hello_ack":
         return;
       case "tool_call": {
-        const { name, args } = message.payload;
+        const { name, args, session, browsers, format } = message.payload;
         try {
-          const data = await executeTool(name, args ?? {});
+          const data = name === "list_browsers" ? browsers ?? [] : await executeCommand(name, args ?? {}, session);
           this.send({
             type: "tool_result",
             responseToRequestId: message.requestId,
-            payload: { data },
+            payload: { data: format === "mcp" ? toolSuccess(name, data) : data },
           });
         } catch (error) {
           this.send({
             type: "tool_result",
             responseToRequestId: message.requestId,
-            payload: { error: error instanceof Error ? error.message : String(error) },
+            payload: format === "mcp" ? { data: toolFailure(error) } : { error: error instanceof Error ? error.message : String(error) },
           });
         }
         return;

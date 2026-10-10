@@ -17,6 +17,8 @@ import {
 } from "./pointer-motion.ts";
 import { isRef, lookupRef } from "./refs.ts";
 import { groupTab } from "./tab-groups.ts";
+import { parseOptions, selectNativeOptions } from "./select-option.ts";
+import { requireUsableBox } from "./element-box.ts";
 
 type ToolArgs = Record<string, unknown>;
 
@@ -174,6 +176,8 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
       return click(args);
     case "fill":
       return fill(args);
+    case "select_option":
+      return selectOption(args);
     case "scroll":
       return scroll(args);
     case "drag":
@@ -320,6 +324,7 @@ const BOX_FN = `function() {
 async function readBox(tabId: number, objectId: string, tool: string): Promise<BoxInfo> {
   const info = await callOn<BoxInfo>(tabId, objectId, BOX_FN);
   if (info?.x == null || info?.y == null) throw new Error(`${tool}: element has no layout box`);
+  requireUsableBox(info, tool);
   return info;
 }
 
@@ -358,7 +363,17 @@ async function click(args: ToolArgs) {
   const objectId = await resolveObjectId(tab.id, selector, "click");
   const info = await targetPoint(tab.id, objectId, "click");
   await clickAt(tab.id, { x: info.x, y: info.y });
-  return { success: true, tag: info.tag, text: info.text };
+  return { success: true, dispatched: true, tag: info.tag, text: info.text };
+}
+
+async function selectOption(args: ToolArgs) {
+  const selector = str(args, "selector");
+  if (!selector) throw new Error("select_option: selector is required (@e ref or CSS)");
+  const options = parseOptions(args.option);
+  const tab = await tabFrom(args);
+  if (!tab.id) throw new Error("select_option: no tab");
+  const objectId = await resolveObjectId(tab.id, selector, "select_option");
+  return callOn(tab.id, objectId, selectNativeOptions.toString(), [{ value: options }]);
 }
 
 const SELECT_FN = `function() {
@@ -566,7 +581,6 @@ async function screenshot(args: ToolArgs) {
     format,
     mimeType: format === "jpeg" ? "image/jpeg" : "image/png",
     base64: captured.data,
-    path: str(args, "path"),
   };
 }
 

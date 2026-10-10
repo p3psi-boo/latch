@@ -17,20 +17,21 @@
 
 | 件 | 职责 | 不负责 |
 |----|------|--------|
-| `packages/extension` | CDP 工具、tab group、连 WS | Agent 循环、鉴权产品 |
+| `packages/extension` | MCP 工具定义、CDP 操作、任务标签页状态、脚本执行、连 WS | Agent 循环、鉴权产品 |
 | `packages/daemon` | `latch start`：HTTP + WS 转发。`latch mcp` 再加 stdio | 执行页面动作、终止 TLS |
 
 VPS 上前面加 Caddy / nginx 做 HTTPS/WSS，daemon 仍是同一份 `latch start`。
 
 线协议在 `packages/protocol`。HTTP 和 MCP 共用 `action` + `args` + `session`，多浏览器时再加 `browser`。
 
-## 线协议（v1）
+## 插件定义工具，线协议使用 v2。
 
 扩展 ↔ daemon：
 
 ```
-hello / hello_ack / ping / pong
-tool_call    { requestId, payload: { name, args } }
+hello { tools: MCP工具定义列表, ...身份与版本 } / hello_ack / ping / pong
+tools_changed { payload: { tools: MCP工具定义列表 } }
+tool_call    { requestId, payload: { name, args, session, browsers?, format? } }
 tool_result  { responseToRequestId, payload: { data } | { error } }
 ```
 
@@ -43,11 +44,11 @@ GET  /status
 GET  /ws
 ```
 
-`POST /run` 在 daemon 沙箱里跑 JS，注入 `page` / `cliLog` / `task.page()`。helpers 走同一套 `dispatchCommand`，不把脚本丢进页面。
+`POST /run` 由 daemon 转给插件。插件在隔离页面的独立 Worker 中执行 JS，提供 `page` / `cliLog` / `task.page()`；`page.call(name,args)` 可以调用插件新增的工具。浏览器操作仍由插件后台执行，不在目标网站中执行脚本编排代码。
 
 `browser` 是扩展 Options 里用户起的 id。一个 daemon 可以挂多台 Chrome；只连了一台时可以省略。备注（`remark`）只出现在 `GET /status` 和 MCP `list_browsers`，不参与路由。同一 id 重连会顶掉旧 socket，并保留该浏览器上的 session。
 
-内部字段（Agent 不要填，由 daemon 注入）：`_tabId` `_session` `_tabIds` `_ownedTabIds`。
+内部字段（Agent 不要填，由插件注入）：`_tabId` `_session` `_tabIds` `_ownedTabIds`。
 
 指针和输入走 CDP，给页面看，没有视觉 overlay。
 
@@ -61,7 +62,7 @@ GET  /ws
 ## 多浏览器
 
 - 标识是用户字符串。扩展 `hello` 带 `browserId` + 可选 `remark`。Options 里没填 id 时生成 UUID v4 并持久化，重连沿用。
-- 每个 id 有自己的 `ExtensionBridge` 和 `SessionStore`。
+- 每个 id 有自己的 `ExtensionBridge`；`SessionStore` 位于插件，使用 `chrome.storage.session` 保存。
 - Hub 按 id 分槽，没有房间、没有配对码。
 
 ## 刻意杀掉的东西
@@ -77,3 +78,11 @@ GET  /ws
 本机：`latch start` → 加载扩展 → `POST /run`（navigate + snapshot），用户 Chrome 里出现分组标签页，snapshot 带回 `@e` ref。
 
 证伪：如果 Agent 必须先开无头浏览器、或扩展里出现第二套工具实现，方向就错了。
+
+## 浏览器工具只在插件中定义。
+
+插件的 `tool-definitions.ts` 和 `tool-schemas.ts` 声明工具定义，`tools.ts` 执行浏览器操作。daemon 使用插件发布的定义回答 MCP 工具列表，并转发请求和结果；daemon 没有固定的浏览器工具名称检查，也不执行脚本或写入截图文件。首次迁移需要同时升级 daemon 与插件；传输协议不变时，新工具只更新插件。
+
+截图以图像字节返回，客户端负责保存。未绑定端点要求不同浏览器的同名工具定义相同；定义有差异时使用绑定浏览器的 MCP 端点。HTTP GET 事件流及 stdio 连接提供工具列表变化通知。插件未连接时，未绑定 MCP 工具列表为空。
+
+MCP 调用使用 `format:"mcp"`，插件生成完整的 MCP 调用结果，daemon 原样返回；HTTP 单步接口仍返回插件的原始数据。

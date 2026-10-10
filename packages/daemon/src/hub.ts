@@ -7,7 +7,6 @@ import {
 } from "@latch/protocol";
 import type { WebSocket } from "ws";
 import { ExtensionBridge } from "./bridge.ts";
-import { SessionStore } from "./sessions.ts";
 
 const HELLO_TIMEOUT_MS = 10_000;
 
@@ -15,12 +14,14 @@ export type BrowserSlot = {
   id: string;
   remark?: string;
   bridge: ExtensionBridge;
-  store: SessionStore;
 };
 
 export class Hub {
   private readonly browsers = new Map<string, BrowserSlot>();
 
+  private readonly subscribers = new Set<() => void>();
+  subscribe(callback: () => void): () => void { this.subscribers.add(callback); return () => { this.subscribers.delete(callback); }; }
+  connectedSlots(): BrowserSlot[] { return [...this.browsers.values()].filter((slot) => slot.bridge.connected); }
   accept(socket: WebSocket): void {
     const incoming = new ExtensionBridge();
     const timer = setTimeout(() => {
@@ -36,13 +37,14 @@ export class Hub {
         incoming.shutdown(CLOSE_CODES.badHello, message.slice(0, 120));
       }
     };
+    incoming.onToolsChanged = () => { for (const callback of this.subscribers) callback(); };
     incoming.attach(socket);
   }
 
   claim(id: string, remark: string | undefined, incoming: ExtensionBridge): BrowserSlot {
     let slot = this.browsers.get(id);
     if (!slot) {
-      slot = { id, remark, bridge: incoming, store: new SessionStore() };
+      slot = { id, remark, bridge: incoming };
       this.browsers.set(id, slot);
       return slot;
     }

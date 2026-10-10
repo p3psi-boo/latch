@@ -12,7 +12,7 @@
     "start": "tsx src/cli.ts start",
     "mcp": "tsx src/cli.ts mcp",
     "build": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/sessions.test.ts src/hub.test.ts src/run.test.ts"
+    "test": "tsx --test src/hub.test.ts src/mcp.test.ts"
   },
   "dependencies": {
     "@latch/protocol": "workspace:*",

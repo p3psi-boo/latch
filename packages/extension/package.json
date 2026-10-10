@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test --experimental-strip-types src/ax.test.ts src/pointer-motion.test.ts"
+    "test": "node --test --experimental-strip-types src/ax.test.ts src/pointer-motion.test.ts src/select-option.test.ts src/sessions.test.ts src/run-worker.test.ts"
   },
   "dependencies": {
     "@latch/protocol": "workspace:*"

@@ -127,7 +127,7 @@ args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 
 | 请求方式 | 路径 | 请求体 | 说明 |
 |---|---|---|---|
-| `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | 在 Node.js 环境中执行自动化脚本 |
+| `POST` | `/run` | `{"session": "...", "source": "...", "browser"?: "..."}` | 将脚本转给 Latch 插件的隔离页面执行 |
 | `POST` | `/command` | `{"session": "...", "action": "...", "args": {...}}` | 直接调用单个页面操作指令 |
 | `POST` | `/mcp` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST MCP 接口（自动寻址可用浏览器） |
 | `POST` | `/mcp/{browser_id}` | `{"jsonrpc": "2.0", "id": 1, ...}` | 远程 HTTP POST MCP 接口（直接固定到指定浏览器） |
@@ -141,7 +141,7 @@ args = ["github:p3psi-boo/latch", "mcp", "--browser", "work"]
 
 #### 示例 1：执行自动化脚本 (`POST /run`)
 
-脚本运行在独立的 Node.js 沙箱中，提供内置的 `page` 操作对象与 `cliLog` 输出函数：
+脚本运行在 Latch 插件的隔离页面内，每次调用使用独立的 Web Worker。daemon 只转发请求，提供给脚本的 `page` 操作对象与 `cliLog` 输出函数由插件定义：
 
 ```bash
 curl -s -X POST http://127.0.0.1:12580/run \
@@ -155,8 +155,12 @@ curl -s -X POST http://127.0.0.1:12580/run \
 `page` 支持的常用方法：
 - 导航与标签页：`goto`、`findTab`、`listTabs`、`closeTab`、`closeSession`
 - 页面分析：`snapshot`（无障碍快照树）、`screenshot`、`evaluate`
-- 用户交互：`click`、`fill`、`type`、`scroll`、`drag`、`wait`
+- 用户交互：`click`、`fill`、`selectOption`、`type`、`scroll`、`drag`、`wait`
 - 底层控制：`cdp`
+
+原生下拉框使用 `await page.selectOption('select[name="my-select"]', {label:"Two"})`。每个匹配条件只指定 `value`、完整的 `label` 或从零开始的 `index` 中的一项。多选下拉框接受匹配条件数组，数组会替换原有选择；空数组 `[]` 会清空选择。扩展会检查选项是否存在、是否重复匹配、是否被禁用，然后设置 DOM 中的选中状态。选择发生变化时，扩展会触发 `isTrusted` 为 `false` 的 `input` 和 `change` 事件，并在同步事件处理结束后核对选中选项。结果包含 `verified`、`mode:"dom"`、`changed`、`values` 和 `labels`；页面后续的异步更新与表单提交需要另外检查。自定义下拉组件仍按组件的点击或键盘操作流程处理。单个 MCP 工具 `select_option` 接受 `selector` 和 `option` 参数，使用同一份扩展实现。
+
+`click` 会检查目标是否有有效的页面尺寸。返回的 `success` 和 `dispatched` 表示鼠标事件已发送，页面的业务结果需要另外检查。
 
 #### 示例 2：执行单个操作指令 (`POST /command`)
 
@@ -173,9 +177,19 @@ curl -s -X POST http://127.0.0.1:12580/command \
 ```
 
 支持的操作列表（`action`）：
-`navigate`, `find_tab`, `list_tabs`, `close_tab`, `close_session`, `snapshot`, `click`, `fill`, `type`, `scroll`, `drag`, `wait`, `screenshot`, `evaluate`, `cdp`。
+`navigate`, `find_tab`, `list_tabs`, `close_tab`, `close_session`, `snapshot`, `click`, `fill`, `select_option`, `type`, `scroll`, `drag`, `wait`, `screenshot`, `evaluate`, `cdp`。
 
 ---
+
+## Latch 插件提供工具定义，daemon 转发请求。
+
+`packages/extension/src/tool-definitions.ts` 和 `tool-schemas.ts` 定义 MCP 工具的名称、说明及参数；`tools.ts` 执行浏览器操作。插件连接时发送工具定义，daemon 使用这些定义回答 `tools/list`，并将 `tools/call` 转给选定的插件。插件重连或更新定义时，daemon 会发送 `notifications/tools/list_changed`。HTTP 客户端可以通过 MCP 端点的 GET 事件流接收通知；客户端仍需重新读取工具列表。
+
+本次迁移使用传输协议 2，首次需要同时更新 daemon 和插件。执行 `pnpm build` 后，新 daemon 位于 `bin/latch.cjs`，插件位于 `packages/extension/dist`。启动命令为 `node bin/latch.cjs start`；在浏览器中开启开发者模式并加载插件目录；更新未打包插件后，在扩展程序页面点击「重新加载」。将插件连接地址设为 daemon 的 `/ws`，MCP 客户端使用 `/mcp/<browser-id>`。旧协议插件会被新版 daemon 拒绝；本次迁移之后，在传输协议不变时新增浏览器工具只需更新插件。
+
+脚本可以使用 `await page.call("工具名称", {参数})` 调用插件新增的工具，已有 `page.selectOption(...)` 等方法保留。daemon 不再执行 JavaScript，也不保存任务的标签页状态。插件把标签页状态存入 `chrome.storage.session`，插件后台执行环境重启或 daemon 重连后可以继续读取；插件重新加载或浏览器退出时，Chrome 会清除这份存储。插件需要 Chrome 116 或更新版本，并使用 `offscreen` 权限创建脚本执行页面。每次脚本执行完成或超过原有执行时限后，插件终止对应 Worker 并移除对应隔离页面。
+
+MCP 截图返回图片内容；HTTP 单步调用和插件脚本返回 `mimeType` 与 `base64` 图像数据。daemon 不再向本机写入截图文件，客户端负责保存图像。多台插件提供同名工具时，未绑定浏览器的 MCP 端点要求工具定义相同；定义不同时使用 `/mcp/<browser-id>` 分别访问。插件未连接时，未绑定端点返回空工具列表，绑定端点报告连接错误。
 
 ## 连接多个浏览器
 
